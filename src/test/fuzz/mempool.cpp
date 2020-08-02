@@ -42,7 +42,7 @@ void test_one_input(const std::vector<uint8_t>& buffer)
 	}
 	case 1: {
 	    // LOCK2(cs_main, mpool.cs);
-	    std::optional<CMutableTransaction mtx = ConsumeDeserializable<CMutableTransaction(fuzzed_data_provider);
+	    std::optional<CMutableTransaction> mtx = ConsumeDeserializable<CMutableTransaction>(fuzzed_data_provider);
 	    if (!mtx) {
 		break;
 	    }
@@ -51,7 +51,34 @@ void test_one_input(const std::vector<uint8_t>& buffer)
 	    // Choose a dummy reason
 	    // TODO: can also use removeForBlock with ConsumeBytes<CTransactionRef>?
 	
-	    auto reason = fuzzed_data_provider.ConsumeEnum<MemPoolRemovalReason>()
+	    //auto reason = fuzzed_data_provider.ConsumeEnum<MemPoolRemovalReason>()
+	    MemPoolRemovalReason reason;
+	    switch (fuzzed_data_provider.ConsumeIntegralInRange<int>(0, 5)) {
+	    case 0: {
+	        reason = MemPoolRemovalReason::EXPIRY;
+	    	break;
+	    }
+	    case 1: {
+	        reason = MemPoolRemovalReason::SIZELIMIT;
+    		break;			
+	    }
+	    case 2: {
+		reason = MemPoolRemovalReason::REORG;
+		break;
+ 	    }
+	    case 3: {
+		reason = MemPoolRemovalReason::BLOCK;
+		break;
+	    }
+	    case 4: {
+		reason = MemPoolRemovalReason::CONFLICT;
+		break;
+	    }
+	    case 5: {
+		reason = MemPoolRemovalReason::REPLACED;
+		break;
+            }
+	    }
 
 	    LOCK2(cs_main, mpool.cs);
 	    mpool.removeRecursive(ctx, reason);
