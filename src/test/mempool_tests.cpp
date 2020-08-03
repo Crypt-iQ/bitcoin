@@ -16,6 +16,24 @@ BOOST_FIXTURE_TEST_SUITE(mempool_tests, TestingSetup)
 
 static constexpr auto REMOVAL_REASON_DUMMY = MemPoolRemovalReason::REPLACED;
 
+BOOST_AUTO_TEST_CASE(MempoolAsanTest)
+{
+    // Test ASAN failure
+    CTxMemPool pool;
+    LOCK2(cs_main, pool.cs);
+    TestMemPoolEntryHelper entry;
+
+    CMutableTransaction tx1 = CMutableTransaction();
+    tx1.vout.resize(1);
+    tx1.vout[0].scriptPubKey = CScript() << OP_11 << OP_EQUAL;
+    tx1.vout[0].nValue = 10 * COIN;
+    pool.addUnchecked(entry.Fee(10000LL).FromTx(tx1));
+
+    CTransaction k = pool.mapTx.find(tx1.GetHash())->GetTx();
+    pool.removeRecursive(k, REMOVAL_REASON_DUMMY);
+    pool.removeRecursive(k, REMOVAL_REASON_DUMMY);
+}
+
 BOOST_AUTO_TEST_CASE(MempoolRemoveTest)
 {
     // Test CTxMemPool::remove functionality
