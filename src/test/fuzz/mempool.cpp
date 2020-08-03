@@ -2,14 +2,21 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <chainparamsbase.h>
 #include <primitives/transaction.h>
 #include <txmempool.h>
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
+#include <test/util/setup_common.h>
 
 #include <vector>
 #include <optional>
+
+void initialize()
+{
+    static TestingSetup setup{CBaseChainParams::REGTEST, {"-nodebuglogfile"}};
+}
 
 void test_one_input(const std::vector<uint8_t>& buffer)
 {
