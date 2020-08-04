@@ -34,7 +34,7 @@ BOOST_AUTO_TEST_CASE(MempoolAsanTest)
     while (fuzzed_data_provider.ConsumeBool()) {
 	switch (fuzzed_data_provider.ConsumeIntegralInRange<uint8_t>(0, 1)) {
 	case 0: {
-	    std::optional<CMutableTransaction> mtx = ConsumeDeserializable<CMutableTransaction>(fuzzed_data_provider);
+	    Optional<CMutableTransaction> mtx = ConsumeDeserializable<CMutableTransaction>(fuzzed_data_provider);
 	    if (!mtx) {
 		break;
 	    }
@@ -44,7 +44,7 @@ BOOST_AUTO_TEST_CASE(MempoolAsanTest)
 	    break;
 	}
 	case 1: {
-	    std::optional<CMutableTransaction> mtx = ConsumeDeserializable<CMutableTransaction>(fuzzed_data_provider);
+	    Optional<CMutableTransaction> mtx = ConsumeDeserializable<CMutableTransaction>(fuzzed_data_provider);
 	    if (!mtx) {
 		break;
 	    }
