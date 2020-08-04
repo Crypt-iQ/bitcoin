@@ -7,6 +7,9 @@
 #include <util/system.h>
 #include <util/time.h>
 
+#include <test/fuzz/FuzzedDataProvider.h>
+#include <test/fuzz/fuzz.h>
+#include <test/fuzz/util.h>
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
@@ -15,6 +18,72 @@
 BOOST_FIXTURE_TEST_SUITE(mempool_tests, TestingSetup)
 
 static constexpr auto REMOVAL_REASON_DUMMY = MemPoolRemovalReason::REPLACED;
+
+BOOST_AUTO_TEST_CASE(MempoolAsanTest)
+{
+    std::vector<uint8_t> crasher;
+    crasher.push_back(0x00);
+    crasher.push_back(0x01);
+    crasher.push_back(0x10);
+    crasher.push_back(0x00);
+
+    // FuzzedDataProvider.h here
+    FuzzedDataProvider fuzzed_data_provider{buffer.data(), buffer.size()};
+    CTxMemPool pool;
+
+    while (fuzzed_data_provider.ConsumeBool()) {
+	switch (fuzzed_data_provider.ConsumeIntegralInRange<uint8_t>(0, 1)) {
+	case 0: {
+	    std::optional<CMutableTransaction> mtx = ConsumeDeserializable<CMutableTransaction>(fuzzed_data_provider);
+	    if (!mtx) {
+		break;
+	    }
+	    const CTransaction ctx{*mtx};
+	    LOCK2(cs_main, pool.cs);
+	    pool.addUnchecked(ConsumeTxMemPoolEntry(fuzzed_data_provider, ctx));
+	    break;
+	}
+	case 1: {
+	    std::optional<CMutableTransaction> mtx = ConsumeDeserializable<CMutableTransaction>(fuzzed_data_provider);
+	    if (!mtx) {
+		break;
+	    }
+	    const CTransaction ctx{*mtx};
+	    MemPoolRemovalReason reason;
+	    switch (fuzzed_data_provider.ConsumeIntegralInRange<uint8_t>(0, 5)) {
+	    case 0: {
+	        reason = MemPoolRemovalReason::EXPIRY;
+		break;
+	    }
+	    case 1: {
+		reason = MemPoolRemovalReason::SIZELIMIT;
+		break;
+ 	    }
+	    case 2: {
+		reason = MemPoolRemovalReason::REORG;
+		break;
+	    }
+	    case 3: {
+		reason = MemPoolRemovalReason::BLOCK;
+		break;
+	    }
+	    case 4: {
+		reason = MemPoolRemovalReason::CONFLICT;
+		break;
+	    }
+	    case 5: {
+		reason = MemPoolRemovalReason::REPLACED;
+		break;
+	    }
+	    }
+
+	    LOCK2(cs_main, pool.cs);
+	    pool.removeRecursive(ctx, reason);
+	    break;
+	}
+	}
+    }
+}
 
 BOOST_AUTO_TEST_CASE(MempoolRemoveTest)
 {
