@@ -643,6 +643,7 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
     LockPoints lp;
     m_view.SetBackend(m_viewmempool);
 
+    /*
     CCoinsViewCache& coins_cache = ::ChainstateActive().CoinsTip();
     // do all inputs exist?
     for (const CTxIn& txin : tx.vin) {
@@ -665,6 +666,7 @@ bool MemPoolAccept::PreChecks(ATMPArgs& args, Workspace& ws)
             return state.Invalid(TxValidationResult::TX_MISSING_INPUTS, "bad-txns-inputs-missingorspent");
         }
     }
+    */
 
     // Bring the best block into scope
     m_view.GetBestBlock();
