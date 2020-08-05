@@ -55,14 +55,10 @@ BOOST_AUTO_TEST_CASE(MempoolCrashTest)
     first_tx.push_back(0x25);
     first_tx.push_back(0x0a);
     first_tx.push_back(0x00);
-
-    CDataStream ds(first_tx, SER_NETWORK, INIT_PROTO_VERSION);
-    CMutableTransaction cmtx;
-    ds >> cmtx;
-
-    // Now that we have the CMutableTransaction, create the mempool entry.
-    // We do all the creation upfront so that the test is straightforward.
-    CTransaction ctx{cmtx};
+    
+    FuzzedDataProvider f1{first_tx.data(), first_tx.size()};
+    Optional<CMutableTransaction> mtx = ConsumeDeserializable<CMutableTransaction>(f1);
+    const CTransaction ctx{*mtx};
 
     CTxMemPoolEntry entry{MakeTransactionRef(ctx), 9, -9223371998198497280, 16777129, 0, 18900
 };
@@ -110,10 +106,9 @@ BOOST_AUTO_TEST_CASE(MempoolCrashTest)
     
     second_tx.push_back(0x52);
 
-    CDataStream ds2(second_tx, SER_NETWORK, INIT_PROTO_VERSION);
-    CMutableTransaction cmtx2;
-    ds2 >> cmtx2;
-    CTransaction ctx2{cmtx2};
+    FuzzedDataProvider f2{second_tx.data(), second_tx.size()};
+    Optional<CMutableTransaction> cmtx2 = ConsumeDeserializable<CMutableTransaction>(f2);
+    const CTransaction ctx2{*cmtx2};
 
     CTxMemPoolEntry entry2{MakeTransactionRef(ctx2), 92233720368547, -9223165547712086016, 0, 0, 61692};
 
@@ -150,11 +145,11 @@ BOOST_AUTO_TEST_CASE(MempoolCrashTest)
     third_tx.push_back(0x70);
     third_tx.push_back(0x24);
     third_tx.push_back(0x5e);
-
-    CDataStream ds3(third_tx, SER_NETWORK, INIT_PROTO_VERSION);
-    CMutableTransaction cmtx3;
-    ds3 >> cmtx3;
-    CTransaction ctx3{cmtx3};
+    
+    FuzzedDataProvider f3{third_tx.data(), third_tx.size()};
+    Optional<CMutableTransaction> cmtx3 = ConsumeDeserializable<CMutableTransaction>(f3);
+    const CTransaction ctx3{*cmtx3};
+ 
     CTxMemPoolEntry entry3{MakeTransactionRef(ctx3), 92233720368547, -9223372036854775808, 32, 0, 54654};
 
     std::vector<uint8_t> four_tx;
@@ -179,10 +174,10 @@ BOOST_AUTO_TEST_CASE(MempoolCrashTest)
     four_tx.push_back(0x77);
     four_tx.push_back(0x79);
 
-    CDataStream ds4(four_tx, SER_NETWORK, INIT_PROTO_VERSION);
-    CMutableTransaction cmtx4;
-    ds4 >> cmtx4;
-    CTransaction ctx4{cmtx4};
+    FuzzedDataProvider f4{four_tx.data(), four_tx.size()};
+    Optional<CMutableTransaction> cmtx4 = ConsumeDeserializable<CMutableTransaction>(f4);
+    const CTransaction ctx4{*cmtx4};
+
     CTxMemPoolEntry entry4{MakeTransactionRef(ctx4), 92233720368547, -501506522908886663, 2038004089, 1, 40854};
 
     std::vector<uint8_t> five_tx;
@@ -207,10 +202,9 @@ BOOST_AUTO_TEST_CASE(MempoolCrashTest)
     five_tx.push_back(0x00);
     five_tx.push_back(0x00);
 
-    CDataStream ds5(five_tx, SER_NETWORK, INIT_PROTO_VERSION);
-    CMutableTransaction cmtx5;
-    ds5 >> cmtx5;
-    CTransaction ctx5{cmtx5};
+    FuzzedDataProvider f5{five_tx.data(), five_tx.size()};
+    Optional<CMutableTransaction> cmtx5 = ConsumeDeserializable<CMutableTranscation>(f5);
+    CTransaction ctx5{*cmtx5};
 
     std::vector<uint8_t> six_tx;
     six_tx.push_back(0x5c);
@@ -238,10 +232,9 @@ BOOST_AUTO_TEST_CASE(MempoolCrashTest)
     six_tx.push_back(0x0a);
     six_tx.push_back(0x00);
 
-    CDataStream ds6(six_tx, SER_NETWORK, INIT_PROTO_VERSION);
-    CMutableTransaction cmtx6;
-    ds6 >> cmtx6;
-    CTransaction ctx6{cmtx6};
+    FuzzedDataProvider f6{six_tx.data(), six_tx.size()};
+    Optional<CMutableTransaction> cmtx6 = ConsumeDeserializable<CMutableTransaction>(f6);
+    CTransaction ctx6{*cmtx6};
 
     std::vector<uint8_t> sev_tx;
     sev_tx.push_back(0x00);
@@ -265,10 +258,9 @@ BOOST_AUTO_TEST_CASE(MempoolCrashTest)
     sev_tx.push_back(0x25);
     sev_tx.push_back(0x0a);
 
-    CDataStream ds7(sev_tx, SER_NETWORK, INIT_PROTO_VERSION);
-    CMutableTransaction cmtx7;
-    ds7 >> cmtx7;
-    CTransaction ctx7{cmtx7};
+    FuzzedDataProvider f7{sev_tx.data(), sev_tx.size()};
+    Optional<CMutableTransaction> cmtx7 = ConsumeDeserializable<CMutableTransaction>(f7);
+    const CTransaction ctx7{*cmtx7};
 
     CTxMemPool pool;
 
