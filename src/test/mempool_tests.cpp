@@ -19,6 +19,269 @@ BOOST_FIXTURE_TEST_SUITE(mempool_tests, TestingSetup)
 
 static constexpr auto REMOVAL_REASON_DUMMY = MemPoolRemovalReason::REPLACED;
 
+BOOST_AUTO_TEST_CASE(MempoolCrashTest)
+{
+    std::vector<uint8_t> first_tx;
+    first_tx.push_back(0x10);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x4a);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x36);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x0a);
+
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x40);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x05);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x36);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x07);
+    first_tx.push_back(0x00);
+    first_tx.push_back(0x2b);
+    first_tx.push_back(0x5c);
+    first_tx.push_back(0x25);
+    first_tx.push_back(0x0a);
+    first_tx.push_back(0x00);
+
+    CDataStream ds(first_tx, SER_NETWORK, INIT_PROTO_VERSION);
+    CMutableTransaction cmtx;
+    ds >> cmtx;
+
+    // Now that we have the CMutableTransaction, create the mempool entry.
+    // We do all the creation upfront so that the test is straightforward.
+    CTransaction ctx{cmtx};
+
+    CTxMemPoolEntry entry{MakeTransactionRef(ctx), 9, -9223371998198497280, 16777129, 0, 18900
+};
+    
+    std::vector<uint8_t> second_tx;
+    second_tx.push_back(0x61);
+    second_tx.push_back(0x00);
+    second_tx.push_back(0x00);
+    second_tx.push_back(0x52);
+    second_tx.push_back(0x52);
+    
+    second_tx.push_back(0x52);
+    second_tx.push_back(0x52);
+    second_tx.push_back(0x52);
+    second_tx.push_back(0x52);
+    second_tx.push_back(0x5c);
+    second_tx.push_back(0x25);
+    second_tx.push_back(0x0a);
+    second_tx.push_back(0x00);
+    second_tx.push_back(0x01);
+    second_tx.push_back(0x00);
+    second_tx.push_back(0x00);
+    second_tx.push_back(0x00);
+    second_tx.push_back(0x8d);
+    second_tx.push_back(0xb7);
+    second_tx.push_back(0xb4);
+    second_tx.push_back(0x63);
+
+    second_tx.push_back(0xdc);
+    second_tx.push_back(0x70);
+    second_tx.push_back(0x00);
+    second_tx.push_back(0x40);
+    second_tx.push_back(0x00);
+    second_tx.push_back(0x2b);
+    second_tx.push_back(0x07);
+    second_tx.push_back(0x00);
+    second_tx.push_back(0x30);
+    second_tx.push_back(0x61);
+    second_tx.push_back(0x00);
+    second_tx.push_back(0x00);
+    second_tx.push_back(0x52);
+    second_tx.push_back(0x52);
+    second_tx.push_back(0x52);
+    second_tx.push_back(0x52);
+    
+    second_tx.push_back(0x52);
+
+    CDataStream ds2(second_tx, SER_NETWORK, INIT_PROTO_VERSION);
+    CMutableTransaction cmtx2;
+    ds2 >> cmtx2;
+    CTransaction ctx2{cmtx2};
+
+    CTxMemPoolEntry entry2{MakeTransactionRef(ctx2), 92233720368547, -9223165547712086016, 0, 0, 61692};
+
+    std::vector<uint8_t> third_tx;
+    third_tx.push_back(0x00);
+    third_tx.push_back(0x00);
+    third_tx.push_back(0x00);
+    third_tx.push_back(0x46);
+    third_tx.push_back(0x00);
+    third_tx.push_back(0x2c);
+
+    third_tx.push_back(0x00);
+    third_tx.push_back(0xff);
+    third_tx.push_back(0x0a);
+    third_tx.push_back(0x00);
+    third_tx.push_back(0x40);
+    third_tx.push_back(0x00);
+    third_tx.push_back(0x05);
+    third_tx.push_back(0x34);
+    third_tx.push_back(0x5c);
+    third_tx.push_back(0x25);
+    third_tx.push_back(0x0a);
+    third_tx.push_back(0x00);
+    third_tx.push_back(0x01);
+    third_tx.push_back(0x00);
+    third_tx.push_back(0x00);
+    third_tx.push_back(0x00);
+
+    third_tx.push_back(0x8d);
+    third_tx.push_back(0xb7);
+    third_tx.push_back(0xb4);
+    third_tx.push_back(0x63);
+    third_tx.push_back(0xdc);
+    third_tx.push_back(0x70);
+    third_tx.push_back(0x24);
+    third_tx.push_back(0x5e);
+
+    CDataStream ds3(third_tx, SER_NETWORK, INIT_PROTO_VERSION);
+    CMutableTransaction cmtx3;
+    ds3 >> cmtx3;
+    CTransaction ctx3{cmtx3};
+    CTxMemPoolEntry entry3{MakeTransactionRef(ctx3), 92233720368547, -9223372036854775808, 32, 0, 54654};
+
+    std::vector<uint8_t> four_tx;
+    four_tx.push_back(0x34);
+    four_tx.push_back(0x5c);
+    four_tx.push_back(0x25);
+    four_tx.push_back(0x0a);
+    four_tx.push_back(0x00);
+    four_tx.push_back(0x00);
+    four_tx.push_back(0x00);
+    four_tx.push_back(0x1a);
+    four_tx.push_back(0x00);
+    four_tx.push_back(0x01);
+    four_tx.push_back(0x00);
+    four_tx.push_back(0x00);
+    four_tx.push_back(0x00);
+    four_tx.push_back(0x7f);
+    four_tx.push_back(0x6b);
+
+    four_tx.push_back(0x58);
+    four_tx.push_back(0xcf);
+    four_tx.push_back(0x77);
+    four_tx.push_back(0x79);
+
+    CDataStream ds4(four_tx, SER_NETWORK, INIT_PROTO_VERSION);
+    CMutableTransaction cmtx4;
+    ds4 >> cmtx4;
+    CTransaction ctx4{cmtx4};
+    CTxMemPoolEntry entry4{MakeTransactionRef(ctx4), 92233720368547, -501506522908886663, 2038004089, 1, 40854};
+
+    std::vector<uint8_t> five_tx;
+    five_tx.push_back(0x79);
+    five_tx.push_back(0xcb);
+    five_tx.push_back(0xde);
+
+    five_tx.push_back(0xdf);
+    five_tx.push_back(0xc8);
+    five_tx.push_back(0xd4);
+    five_tx.push_back(0x21);	
+    five_tx.push_back(0x2f);
+    five_tx.push_back(0x98);
+    five_tx.push_back(0x2f);
+    five_tx.push_back(0xa8);
+    five_tx.push_back(0x1a);
+    five_tx.push_back(0x34);
+    five_tx.push_back(0x00);
+    five_tx.push_back(0x20);
+    five_tx.push_back(0x00);
+    five_tx.push_back(0x00);
+    five_tx.push_back(0x00);
+    five_tx.push_back(0x00);
+
+    CDataStream ds5(five_tx, SER_NETWORK, INIT_PROTO_VERSION);
+    CMutableTransaction cmtx5;
+    ds5 >> cmtx5;
+    CTransaction ctx5{cmtx5};
+
+    std::vector<uint8_t> six_tx;
+    six_tx.push_back(0x5c);
+    six_tx.push_back(0x25);
+    six_tx.push_back(0x0a);
+    six_tx.push_back(0x00);
+    six_tx.push_back(0x01);
+    six_tx.push_back(0x00);
+    six_tx.push_back(0x00);
+    six_tx.push_back(0x00);
+    six_tx.push_back(0x46);
+    six_tx.push_back(0x00);
+    six_tx.push_back(0x2c);
+    six_tx.push_back(0x00);
+    six_tx.push_back(0xff);
+
+    six_tx.push_back(0x0a);
+    six_tx.push_back(0x00);
+    six_tx.push_back(0x40);
+    six_tx.push_back(0x00);
+    six_tx.push_back(0x05);
+    six_tx.push_back(0x34);
+    six_tx.push_back(0x5c);
+    six_tx.push_back(0x25);
+    six_tx.push_back(0x0a);
+    six_tx.push_back(0x00);
+
+    CDataStream ds6(six_tx, SER_NETWORK, INIT_PROTO_VERSION);
+    CMutableTransaction cmtx6;
+    ds6 >> cmtx6;
+    CTransaction ctx6{cmtx6};
+
+    std::vector<uint8_t> sev_tx;
+    sev_tx.push_back(0x00);
+    sev_tx.push_back(0x8d);
+    sev_tx.push_back(0xb7);
+
+    sev_tx.push_back(0xb4);
+    sev_tx.push_back(0x63);
+    sev_tx.push_back(0xdc);
+    sev_tx.push_back(0x70);
+    sev_tx.push_back(0x24);
+    sev_tx.push_back(0x5e);
+    sev_tx.push_back(0x23);
+    sev_tx.push_back(0xda);
+    sev_tx.push_back(0x4f);
+    sev_tx.push_back(0x00);
+    sev_tx.push_back(0x00);
+    sev_tx.push_back(0x00);
+    sev_tx.push_back(0x34);
+    sev_tx.push_back(0x5c);
+    sev_tx.push_back(0x25);
+    sev_tx.push_back(0x0a);
+
+    CDataStream ds7(sev_tx, SER_NETWORK, INIT_PROTO_VERSION);
+    CMutableTransaction cmtx7;
+    ds7 >> cmtx7;
+    CTransaction ctx7{cmtx7};
+
+    CTxMemPool pool;
+
+    pool.addUnchecked(entry);
+    pool.addUnchecked(entry2);
+    pool.addUnchecked(entry3);
+    pool.addUnchecked(entry4);
+
+    pool.removeRecursive(ctx5, MemPoolRemovalReason::EXPIRY);    
+    pool.removeRecursive(ctx6, MemPoolRemovalReason::EXPIRY);
+    pool.removeRecursive(ctx7, MemPoolRemovalReason::EXPIRY);
+}
+
 BOOST_AUTO_TEST_CASE(MempoolAsanTest)
 {
     std::vector<uint8_t> crasher;
