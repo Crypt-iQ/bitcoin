@@ -28,7 +28,7 @@ BOOST_AUTO_TEST_CASE(MempoolAsanTest)
     crasher.push_back(0x00);
 
     // FuzzedDataProvider.h here
-    FuzzedDataProvider fuzzed_data_provider{buffer.data(), buffer.size()};
+    FuzzedDataProvider fuzzed_data_provider{crasher.data(), crasher.size()};
     CTxMemPool pool;
 
     while (fuzzed_data_provider.ConsumeBool()) {

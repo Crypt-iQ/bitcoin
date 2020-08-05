@@ -73,7 +73,7 @@ NODISCARD inline std::optional<T> ConsumeDeserializable(FuzzedDataProvider& fuzz
     try {
         ds >> obj;
     } catch (const std::ios_base::failure&) {
-        return std::nullopt;
+        return nullopt;
     }
     return obj;
 }
