@@ -74,6 +74,8 @@ void test_one_input(const std::vector<uint8_t>& buffer)
             connman.ProcessMessagesOnce(random_node);
         } catch (const std::ios_base::failure&) {
         }
+	LOCK(random_node.cs_sendProcessing);
+	g_setup->m_node.peer_logic.SendMessages(random_node);
     }
     SyncWithValidationInterfaceQueue();
     LOCK2(::cs_main, g_cs_orphans); // See init.cpp for rationale for implicit locking order requirement
