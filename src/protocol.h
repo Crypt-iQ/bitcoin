@@ -419,7 +419,7 @@ public:
     // Combined-message helper methods
     bool IsGenTxMsg()     const { return type == MSG_TX || type == MSG_WTX || type == MSG_WITNESS_TX; }
 
-    int type;
+    uint32_t type;
     uint256 hash;
 };
 
