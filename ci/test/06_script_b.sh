@@ -45,6 +45,7 @@ if [ "$RUN_SECURITY_TESTS" = "true" ]; then
   END_FOLD
 fi
 
+# Could instead just start running the fuzzer if MSAN is working properly.
 if [ "$RUN_FUZZ_TESTS" = "true" ]; then
   BEGIN_FOLD fuzz-tests
   DOCKER_EXEC LD_LIBRARY_PATH=$DEPENDS_DIR/$HOST/lib test/fuzz/test_runner.py ${FUZZ_TESTS_CONFIG} $MAKEJOBS -l DEBUG ${DIR_FUZZ_IN}
