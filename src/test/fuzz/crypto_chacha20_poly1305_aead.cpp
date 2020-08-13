@@ -56,11 +56,11 @@ void test_one_input(const std::vector<uint8_t>& buffer)
             break;
         }
         case 4: {
-            seqnr_payload = fuzzed_data_provider.ConsumeIntegral<int>();
+            seqnr_payload = fuzzed_data_provider.ConsumeIntegral<uint64_t>();
             break;
         }
         case 5: {
-            seqnr_aad = fuzzed_data_provider.ConsumeIntegral<int>();
+            seqnr_aad = fuzzed_data_provider.ConsumeIntegral<uint64_t>();
             break;
         }
         case 6: {
