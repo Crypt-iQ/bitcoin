@@ -55,7 +55,11 @@ void test_one_input(const std::vector<uint8_t>& buffer)
             aad_pos += CHACHA20_POLY1305_AEAD_AAD_LEN;
             if (aad_pos + CHACHA20_POLY1305_AEAD_AAD_LEN > CHACHA20_ROUND_OUTPUT) {
                 aad_pos = 0;
-                seqnr_aad += 1;
+		if (AdditionOverflow(seqnr_aad, 1)) {
+		    seqnr_aad = 1;
+		} else {
+		    seqnr_aad += 1;
+		}
             }
             break;
         }
