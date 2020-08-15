@@ -47,7 +47,11 @@ void test_one_input(const std::vector<uint8_t>& buffer)
             break;
         }
         case 3: {
-            seqnr_payload += 1;
+	    if (AdditionOverflow(seqnr_payload, 1)) {
+	        seqnr_payload = 1;
+	    } else {
+	        seqnr_payload += 1;
+	    }
             aad_pos += CHACHA20_POLY1305_AEAD_AAD_LEN;
             if (aad_pos + CHACHA20_POLY1305_AEAD_AAD_LEN > CHACHA20_ROUND_OUTPUT) {
                 aad_pos = 0;
