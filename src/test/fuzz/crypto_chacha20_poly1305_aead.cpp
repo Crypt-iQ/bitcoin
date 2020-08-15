@@ -47,20 +47,28 @@ void test_one_input(const std::vector<uint8_t>& buffer)
             break;
         }
         case 3: {
-            seqnr_payload += 1;
+            if (AdditionOverflow(seqnr_payload, (unsigned long)1)) {
+                seqnr_payload = 1;
+            } else {
+                seqnr_payload += 1;
+            }
             aad_pos += CHACHA20_POLY1305_AEAD_AAD_LEN;
             if (aad_pos + CHACHA20_POLY1305_AEAD_AAD_LEN > CHACHA20_ROUND_OUTPUT) {
                 aad_pos = 0;
-                seqnr_aad += 1;
+                if (AdditionOverflow(seqnr_aad, (unsigned long)1)) {
+                    seqnr_aad = 1;
+                } else {
+                    seqnr_aad += 1;
+                }
             }
             break;
         }
         case 4: {
-            seqnr_payload = fuzzed_data_provider.ConsumeIntegral<int>();
+            seqnr_payload = fuzzed_data_provider.ConsumeIntegral<uint64_t>();
             break;
         }
         case 5: {
-            seqnr_aad = fuzzed_data_provider.ConsumeIntegral<int>();
+            seqnr_aad = fuzzed_data_provider.ConsumeIntegral<uint64_t>();
             break;
         }
         case 6: {
