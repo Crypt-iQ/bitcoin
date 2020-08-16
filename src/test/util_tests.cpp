@@ -20,6 +20,7 @@
 #include <util/string.h>
 #include <util/time.h>
 #include <util/vector.h>
+#include <util/url.h>
 
 #include <array>
 #include <stdint.h>
@@ -34,6 +35,8 @@
 #endif
 
 #include <boost/test/unit_test.hpp>
+
+#include <test/fuzz/FuzzedDataProvider.h>
 
 /* defined in logging.cpp */
 namespace BCLog {
@@ -50,6 +53,19 @@ BOOST_AUTO_TEST_CASE(util_check)
     const int two = *Assert(p_two);
     Assert(two == 2);
     Assert(true);
+}
+
+BOOST_AUTO_TEST_CASE(doit)
+{
+    // Include the fuzz header.
+
+    std::string s1 (":");
+    std::vector<uint8_t> vec(s1.begin(), s1.end());
+    std::vector<uint8_t>& buffer = vec;
+    FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
+    const std::string random_string_1 = fuzzed_data_provider.ConsumeRandomLengthString(32);
+    //BOOST_CHECK_EQUAL(random_string_1, ";");
+    (void)urlDecode(random_string_1);
 }
 
 BOOST_AUTO_TEST_CASE(util_criticalsection)
