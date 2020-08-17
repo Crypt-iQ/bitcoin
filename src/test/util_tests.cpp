@@ -64,7 +64,7 @@ BOOST_AUTO_TEST_CASE(doit)
     std::vector<uint8_t>& buffer = vec;
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
     const std::string random_string_1 = fuzzed_data_provider.ConsumeRandomLengthString(32);
-    //BOOST_CHECK_EQUAL(random_string_1, ";");
+    BOOST_CHECK_EQUAL(random_string_1, ";");
     (void)urlDecode(random_string_1);
 }
 
