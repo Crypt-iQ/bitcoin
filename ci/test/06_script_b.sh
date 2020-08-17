@@ -48,6 +48,7 @@ fi
 # Could instead just start running the fuzzer if MSAN is working properly.
 if [ "$RUN_FUZZ_TESTS" = "true" ]; then
   BEGIN_FOLD fuzz-tests
-  DOCKER_EXEC LD_LIBRARY_PATH=$DEPENDS_DIR/$HOST/lib test/fuzz/test_runner.py ${FUZZ_TESTS_CONFIG} $MAKEJOBS -l DEBUG ${DIR_FUZZ_IN}
+  #DOCKER_EXEC LD_LIBRARY_PATH=$DEPENDS_DIR/$HOST/lib ~/bitcoin/src/test/fuzz/process_messages ~/bitcoin/src/qa-assets/fuzz_seed_corpus 
+  DOCKER_EXEC LD_LIBRARY_PATH=$DEPENDS_DIR/$HOST/lib test/fuzz/test_runner.py ${FUZZ_TESTS_CONFIG} $MAKEJOBS -l DEBUG ${DIR_FUZZ_IN} process_messages
   END_FOLD
 fi
