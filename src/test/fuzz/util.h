@@ -34,8 +34,22 @@
 
 NODISCARD inline std::vector<uint8_t> ConsumeRandomLengthByteVector(FuzzedDataProvider& fuzzed_data_provider, const size_t max_length = 4096) noexcept
 {
-    const std::string s = fuzzed_data_provider.ConsumeRandomLengthString(max_length);
-    return {s.begin(), s.end()};
+    std::vector<uint8_t> result;
+    result.reserve(std::min(max_length, fuzzed_data_provider.remaining_bytes()));
+    for (size_t i = 0; i < max_length && fuzzed_data_provider.remaining_bytes() != 0; ++i) {
+        std::vector<uint8_t> v = fuzzed_data_provider.ConsumeBytes<uint8_t>(1);
+        unsigned char next = v.back();
+        if (next == '\\' && fuzzed_data_provider.remaining_bytes() != 0) {
+            v = fuzzed_data_provider.ConsumeBytes<uint8_t>(1);
+            next = v.back();
+            if (next != '\\')
+                break;
+        }
+        result.push_back(next);
+    }
+
+    result.shrink_to_fit();
+    return result;
 }
 
 NODISCARD inline std::vector<char> ConsumeRandomLengthCharVector(FuzzedDataProvider& fuzzed_data_provider, const size_t max_length = 4096) noexcept
