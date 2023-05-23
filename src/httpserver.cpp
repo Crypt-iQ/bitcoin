@@ -224,6 +224,14 @@ static void http_request_cb(struct evhttp_request* req, void* arg)
             assert(n == 1);
             g_requests_cv.notify_all();
         }, nullptr);
+
+        auto conn = evhttp_request_get_connection(req);
+        evhttp_connection_set_closecb(conn, [](evhttp_connection* conn, void* arg) {
+            auto req = static_cast<evhttp_request*>(arg);
+            LOCK(g_requests_mutex);
+            auto n{g_requests.erase(req)};
+            if (n == 1 && g_requests.empty()) g_requests_cv.notify_all();
+        }, req);
     }
 
     // Disable reading to work around a libevent bug, fixed in 2.2.0.
