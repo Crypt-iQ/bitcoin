@@ -5,10 +5,19 @@
 #include <span.h>
 #include <streams.h>
 
+#include <array>
+
 std::size_t AutoFile::detail_fread(Span<std::byte> dst)
 {
     if (!m_file) throw std::ios_base::failure("AutoFile::read: file handle is nullptr");
-    return std::fread(dst.data(), 1, dst.size(), m_file);
+    if (m_xor.empty()) {
+        return std::fread(dst.data(), 1, dst.size(), m_file);
+    }
+    const auto init_pos{std::ftell(m_file)};
+    if (init_pos < 0) return 0;
+    std::size_t ret{std::fread(dst.data(), 1, dst.size(), m_file)};
+    util::Xor(dst.subspan(0, ret), m_xor, init_pos);
+    return ret;
 }
 
 void AutoFile::read(Span<std::byte> dst)
@@ -34,7 +43,21 @@ void AutoFile::ignore(size_t nSize)
 void AutoFile::write(Span<const std::byte> src)
 {
     if (!m_file) throw std::ios_base::failure("AutoFile::write: file handle is nullptr");
-    if (std::fwrite(src.data(), 1, src.size(), m_file) != src.size()) {
-        throw std::ios_base::failure("AutoFile::write: write failed");
+    if (m_xor.empty()) {
+        if (std::fwrite(src.data(), 1, src.size(), m_file) != src.size()) {
+            throw std::ios_base::failure("AutoFile::write: write failed");
+        }
+    } else {
+        std::array<std::byte, 4096> buf;
+        while (src.size() > 0) {
+            auto buf_now{Span{buf}.first(std::min<size_t>(src.size(), buf.size()))};
+            std::copy(src.begin(), src.begin() + buf_now.size(), buf_now.begin());
+            const auto current_pos{std::ftell(m_file)};
+            util::Xor(buf_now, m_xor, current_pos);
+            if (current_pos < 0 || std::fwrite(buf_now.data(), 1, buf_now.size(), m_file) != buf_now.size()) {
+                throw std::ios_base::failure{"XorFile::write: failed"};
+            }
+            src = src.subspan(buf_now.size());
+        }
     }
 }
