@@ -10,6 +10,7 @@
 - Verify that out-of-order blocks are correctly processed, see LoadExternalBlockFile()
 """
 
+from test_framework.messages import deser_string
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.p2p import MAGIC_BYTES
 from test_framework.util import assert_equal
@@ -39,9 +40,18 @@ class ReindexTest(BitcoinTestFramework):
         # we're generating them rather than getting them from peers), so to
         # test out-of-order handling, swap blocks 1 and 2 on disk.
         blk0 = self.nodes[0].chain_path / "blocks" / "blk00000.dat"
+        with open(self.nodes[0].blocks_path / "xor.key", "rb") as xor_f:
+            xor_dat = deser_string(xor_f)
+
+        def util_xor(data, key):
+            data = bytearray(data)
+            for i in range(len(data)):
+                data[i] ^= key[i % len(key)]
+            return bytes(data)
+
         with open(blk0, 'r+b') as bf:
             # Read at least the first few blocks (including genesis)
-            b = bf.read(2000)
+            b = util_xor(bf.read(2000), xor_dat)
 
             # Find the offsets of blocks 2, 3, and 4 (the first 3 blocks beyond genesis)
             # by searching for the regtest marker bytes (see pchMessageStart).
@@ -55,12 +65,15 @@ class ReindexTest(BitcoinTestFramework):
             b4_start = find_block(b, b3_start)
 
             # Blocks 2 and 3 should be the same size.
-            assert_equal(b3_start-b2_start, b4_start-b3_start)
+            assert_equal(b3_start - b2_start, b4_start - b3_start)
 
             # Swap the second and third blocks (don't disturb the genesis block).
+            b_new = bytearray(b)
+            b_new[b2_start:b3_start] = b[b3_start:b4_start]
+            b_new[b3_start:b4_start] = b[b2_start:b3_start]
+            b_new = util_xor(b_new, xor_dat)
             bf.seek(b2_start)
-            bf.write(b[b3_start:b4_start])
-            bf.write(b[b2_start:b3_start])
+            bf.write(b_new[b2_start:b4_start])
 
         # The reindexing code should detect and accommodate out of order blocks.
         with self.nodes[0].assert_debug_log([

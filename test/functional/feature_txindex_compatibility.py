@@ -16,6 +16,7 @@ from test_framework.wallet import MiniWallet
 
 class TxindexCompatibilityTest(BitcoinTestFramework):
     def set_test_params(self):
+        self.setup_clean_chain = True
         self.num_nodes = 3
         self.extra_args = [
             ["-reindex", "-txindex"],
@@ -42,6 +43,7 @@ class TxindexCompatibilityTest(BitcoinTestFramework):
 
     def run_test(self):
         mini_wallet = MiniWallet(self.nodes[1])
+        self.generate(mini_wallet, 101)
         spend_utxo = mini_wallet.get_utxo()
         mini_wallet.send_self_transfer(from_node=self.nodes[1], utxo_to_spend=spend_utxo)
         self.generate(self.nodes[1], 1)

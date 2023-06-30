@@ -8,11 +8,16 @@
 #include <kernel/notifications_interface.h>
 #include <util/fs.h>
 
+#include <cstddef>
 #include <cstdint>
+#include <optional>
+#include <vector>
 
 class CChainParams;
 
 namespace kernel {
+
+static constexpr bool DEFAULT_XOR_KEY_BLOCKSDIR{true};
 
 /**
  * An options struct for `BlockManager`, more ergonomically referred to as
@@ -20,6 +25,7 @@ namespace kernel {
  */
 struct BlockManagerOpts {
     const CChainParams& chainparams;
+    bool xor_key{DEFAULT_XOR_KEY_BLOCKSDIR};
     uint64_t prune_target{0};
     bool fast_prune{false};
     const fs::path blocks_dir;
