@@ -346,7 +346,7 @@ bool BlockManager::LoadBlockIndexDB()
     }
     for (std::set<int>::iterator it = setBlkDataFiles.begin(); it != setBlkDataFiles.end(); it++) {
         FlatFilePos pos(*it, 0);
-        if (AutoFile{OpenBlockFile(pos, true)}.IsNull()) {
+        if (OpenBlockFile(pos, true).IsNull()) {
             return false;
         }
     }
@@ -479,7 +479,7 @@ CBlockFileInfo* BlockManager::GetBlockFileInfo(size_t n)
 bool BlockManager::UndoWriteToDisk(const CBlockUndo& blockundo, FlatFilePos& pos, const uint256& hashBlock, const CMessageHeader::MessageStartChars& messageStart) const
 {
     // Open history file to append
-    AutoFile fileout{OpenUndoFile(pos)};
+    CAutoFile fileout{OpenUndoFile(pos)};
     if (fileout.IsNull()) {
         return error("%s: OpenUndoFile failed", __func__);
     }
@@ -514,7 +514,7 @@ bool BlockManager::UndoReadFromDisk(CBlockUndo& blockundo, const CBlockIndex& in
     }
 
     // Open history file to read
-    AutoFile filein{OpenUndoFile(pos, true)};
+    CAutoFile filein{OpenUndoFile(pos, true)};
     if (filein.IsNull()) {
         return error("%s: OpenUndoFile failed", __func__);
     }
@@ -602,15 +602,15 @@ FlatFileSeq BlockManager::UndoFileSeq() const
     return FlatFileSeq(m_opts.blocks_dir, "rev", UNDOFILE_CHUNK_SIZE);
 }
 
-FILE* BlockManager::OpenBlockFile(const FlatFilePos& pos, bool fReadOnly) const
+CAutoFile BlockManager::OpenBlockFile(const FlatFilePos& pos, bool fReadOnly) const
 {
-    return BlockFileSeq().Open(pos, fReadOnly);
+    return CAutoFile{BlockFileSeq().Open(pos, fReadOnly), SER_DISK, CLIENT_VERSION, m_xor_key};
 }
 
 /** Open an undo file (rev?????.dat) */
-FILE* BlockManager::OpenUndoFile(const FlatFilePos& pos, bool fReadOnly) const
+CAutoFile BlockManager::OpenUndoFile(const FlatFilePos& pos, bool fReadOnly) const
 {
-    return UndoFileSeq().Open(pos, fReadOnly);
+    return CAutoFile{UndoFileSeq().Open(pos, fReadOnly), SER_DISK, CLIENT_VERSION, m_xor_key};
 }
 
 fs::path BlockManager::GetBlockPosFilename(const FlatFilePos& pos) const
@@ -710,7 +710,7 @@ bool BlockManager::FindUndoPos(BlockValidationState& state, int nFile, FlatFileP
 bool BlockManager::WriteBlockToDisk(const CBlock& block, FlatFilePos& pos, const CMessageHeader::MessageStartChars& messageStart) const
 {
     // Open history file to append
-    CAutoFile fileout(OpenBlockFile(pos), SER_DISK, CLIENT_VERSION);
+    CAutoFile fileout{OpenBlockFile(pos)};
     if (fileout.IsNull()) {
         return error("WriteBlockToDisk: OpenBlockFile failed");
     }
@@ -765,7 +765,7 @@ bool BlockManager::ReadBlockFromDisk(CBlock& block, const FlatFilePos& pos) cons
     block.SetNull();
 
     // Open history file to read
-    CAutoFile filein(OpenBlockFile(pos, true), SER_DISK, CLIENT_VERSION);
+    CAutoFile filein{OpenBlockFile(pos, true)};
     if (filein.IsNull()) {
         return error("ReadBlockFromDisk: OpenBlockFile failed for %s", pos.ToString());
     }
@@ -808,7 +808,7 @@ bool BlockManager::ReadRawBlockFromDisk(std::vector<uint8_t>& block, const FlatF
 {
     FlatFilePos hpos = pos;
     hpos.nPos -= 8; // Seek back 8 bytes for meta header
-    AutoFile filein{OpenBlockFile(hpos, true)};
+    CAutoFile filein{OpenBlockFile(hpos, true)};
     if (filein.IsNull()) {
         return error("%s: OpenBlockFile failed for %s", __func__, pos.ToString());
     }
@@ -865,6 +865,12 @@ FlatFilePos BlockManager::SaveBlockToDisk(const CBlock& block, int nHeight, CCha
     return blockPos;
 }
 
+BlockManager::BlockManager(const util::SignalInterrupt& interrupt, Options opts)
+    : m_prune_mode{opts.prune_target > 0},
+      m_xor_key{},
+      m_opts{std::move(opts)},
+      m_interrupt{interrupt} {}
+
 class ImportingNow
 {
     std::atomic<bool>& m_importing;
@@ -900,7 +906,7 @@ void ImportBlocks(ChainstateManager& chainman, std::vector<fs::path> vImportFile
                 if (!fs::exists(chainman.m_blockman.GetBlockPosFilename(pos))) {
                     break; // No block files left to reindex
                 }
-                CAutoFile file{chainman.m_blockman.OpenBlockFile(pos, true), SER_DISK, CLIENT_VERSION};
+                CAutoFile file{chainman.m_blockman.OpenBlockFile(pos, true)};
                 if (file.IsNull()) {
                     break; // This error is logged in OpenBlockFile
                 }
