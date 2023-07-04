@@ -62,7 +62,6 @@ FUZZ_TARGET(buffered_file)
                 });
         }
         opt_buffered_file->GetPos();
-        opt_buffered_file->GetType();
         opt_buffered_file->GetVersion();
     }
 }
