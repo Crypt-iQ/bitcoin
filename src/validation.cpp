@@ -4514,7 +4514,6 @@ void Chainstate::LoadExternalBlockFile(
 
     int nLoaded = 0;
     try {
-        // This takes over fileIn and calls fclose() on it in the CBufferedFile destructor
         CBufferedFile blkdat(fileIn, 2*MAX_BLOCK_SERIALIZED_SIZE, MAX_BLOCK_SERIALIZED_SIZE+8, SER_DISK, CLIENT_VERSION);
         // nRewind indicates where to resume scanning in case something goes wrong,
         // such as a block fails to deserialize.

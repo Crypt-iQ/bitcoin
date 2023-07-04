@@ -900,12 +900,12 @@ void ImportBlocks(ChainstateManager& chainman, std::vector<fs::path> vImportFile
                 if (!fs::exists(chainman.m_blockman.GetBlockPosFilename(pos))) {
                     break; // No block files left to reindex
                 }
-                FILE* file = chainman.m_blockman.OpenBlockFile(pos, true);
-                if (!file) {
+                CAutoFile file{chainman.m_blockman.OpenBlockFile(pos, true), SER_DISK, CLIENT_VERSION};
+                if (file.IsNull()) {
                     break; // This error is logged in OpenBlockFile
                 }
                 LogPrintf("Reindexing block file blk%05u.dat...\n", (unsigned int)nFile);
-                chainman.ActiveChainstate().LoadExternalBlockFile(file, &pos, &blocks_with_unknown_parent);
+                chainman.ActiveChainstate().LoadExternalBlockFile(file.Get(), &pos, &blocks_with_unknown_parent);
                 if (chainman.m_interrupt) {
                     LogPrintf("Interrupt requested. Exit %s\n", __func__);
                     return;
@@ -921,10 +921,10 @@ void ImportBlocks(ChainstateManager& chainman, std::vector<fs::path> vImportFile
 
         // -loadblock=
         for (const fs::path& path : vImportFiles) {
-            FILE* file = fsbridge::fopen(path, "rb");
-            if (file) {
+            CAutoFile file{fsbridge::fopen(path, "rb"), SER_DISK, CLIENT_VERSION};
+            if (!file.IsNull()) {
                 LogPrintf("Importing blocks file %s...\n", fs::PathToString(path));
-                chainman.ActiveChainstate().LoadExternalBlockFile(file);
+                chainman.ActiveChainstate().LoadExternalBlockFile(file.Get());
                 if (chainman.m_interrupt) {
                     LogPrintf("Interrupt requested. Exit %s\n", __func__);
                     return;

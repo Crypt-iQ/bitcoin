@@ -10,13 +10,13 @@
 static void FindByte(benchmark::Bench& bench)
 {
     // Setup
-    FILE* file = fsbridge::fopen("streams_tmp", "w+b");
+    CAutoFile file{fsbridge::fopen("streams_tmp", "w+b"), 0, 0};
     const size_t file_size = 200;
     uint8_t data[file_size] = {0};
     data[file_size-1] = 1;
-    fwrite(&data, sizeof(uint8_t), file_size, file);
-    rewind(file);
-    CBufferedFile bf(file, /*nBufSize=*/file_size + 1, /*nRewindIn=*/file_size, 0, 0);
+    file << data;
+    std::rewind(file.Get());
+    CBufferedFile bf(file.Get(), /*nBufSize=*/file_size + 1, /*nRewindIn=*/file_size, 0, 0);
 
     bench.run([&] {
         bf.SetPos(0);
@@ -24,7 +24,7 @@ static void FindByte(benchmark::Bench& bench)
     });
 
     // Cleanup
-    bf.fclose();
+    file.fclose();
     fs::remove("streams_tmp");
 }
 
