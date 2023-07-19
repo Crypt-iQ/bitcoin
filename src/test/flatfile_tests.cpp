@@ -10,7 +10,46 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <cstddef>
+#include <vector>
+
+#include <bench/data/block413567.raw.h>
+#include <serialize.h>
+#include <validation.h>
+
 BOOST_FIXTURE_TEST_SUITE(flatfile_tests, BasicTestingSetup)
+
+BOOST_AUTO_TEST_CASE(xorblock)
+{
+    const std::vector<uint8_t> block413567{std::begin(block413567_raw), std::end(block413567_raw)};
+    CDataStream stream(block413567, SER_NETWORK, PROTOCOL_VERSION);
+    CBlock block;
+    stream >> block;
+
+    const auto data_dir = m_args.GetDataDirBase();
+    FlatFileSeq seq(data_dir, "blk", 0x1000000);
+
+    std::vector<std::byte> key;
+    key.push_back(std::byte{0x10});
+    key.push_back(std::byte{0x5f});
+    key.push_back(std::byte{0x7f});
+    key.push_back(std::byte{0xff});
+    key.push_back(std::byte{0x00});
+    key.push_back(std::byte{0x33});
+    key.push_back(std::byte{0x55});
+    key.push_back(std::byte{0x49});
+
+    {
+        CAutoFile file{seq.Open(FlatFilePos(0, 0), false), SER_DISK, CLIENT_VERSION, key};
+        file << block;
+    }
+
+    {
+        CAutoFile file{seq.Open(FlatFilePos(0, 0), true), SER_DISK, CLIENT_VERSION, key};
+        CBlock block;
+        file >> block;
+    }
+}
 
 BOOST_AUTO_TEST_CASE(flatfile_filename)
 {
