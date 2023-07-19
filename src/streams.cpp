@@ -13,10 +13,9 @@ std::size_t AutoFile::detail_fread(Span<std::byte> dst)
     if (m_xor.empty()) {
         return std::fread(dst.data(), 1, dst.size(), m_file);
     }
-    const auto init_pos{std::ftell(m_file)};
-    if (init_pos < 0) return 0;
     std::size_t ret{std::fread(dst.data(), 1, dst.size(), m_file)};
-    util::Xor(dst.subspan(0, ret), m_xor, init_pos);
+    util::Xor(dst.subspan(0, ret), m_xor, m_xorfilepos);
+    m_xorfilepos += ret;
     return ret;
 }
 
@@ -33,7 +32,9 @@ void AutoFile::ignore(size_t nSize)
     unsigned char data[4096];
     while (nSize > 0) {
         size_t nNow = std::min<size_t>(nSize, sizeof(data));
-        if (std::fread(data, 1, nNow, m_file) != nNow) {
+        auto numBytes = std::fread(data, 1, nNow, m_file);
+        if (!m_xor.empty()) m_xorfilepos += numBytes;
+        if (numBytes != nNow) {
             throw std::ios_base::failure(feof() ? "AutoFile::ignore: end of file" : "AutoFile::ignore: fread failed");
         }
         nSize -= nNow;
@@ -52,9 +53,10 @@ void AutoFile::write(Span<const std::byte> src)
         while (src.size() > 0) {
             auto buf_now{Span{buf}.first(std::min<size_t>(src.size(), buf.size()))};
             std::copy(src.begin(), src.begin() + buf_now.size(), buf_now.begin());
-            const auto current_pos{std::ftell(m_file)};
-            util::Xor(buf_now, m_xor, current_pos);
-            if (current_pos < 0 || std::fwrite(buf_now.data(), 1, buf_now.size(), m_file) != buf_now.size()) {
+            util::Xor(buf_now, m_xor, m_xorfilepos);
+            auto numBytes = std::fwrite(buf_now.data(), 1, buf_now.size(), m_file);
+            m_xorfilepos += numBytes;
+            if (numBytes != buf_now.size()) {
                 throw std::ios_base::failure{"XorFile::write: failed"};
             }
             src = src.subspan(buf_now.size());

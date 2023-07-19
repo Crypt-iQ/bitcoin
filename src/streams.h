@@ -482,12 +482,20 @@ class AutoFile
 {
 protected:
     std::FILE* m_file;
-    const std::vector<std::byte> m_xor;
 
 public:
-    explicit AutoFile(std::FILE* file, std::vector<std::byte> data_xor={}) : m_file{file}, m_xor{std::move(data_xor)} {}
+    explicit AutoFile(std::FILE* file, std::vector<std::byte> data_xor={}) : m_file{file}, m_xor{std::move(data_xor)} {
+        m_xorfilepos = std::ftell(m_file);
+        if (m_xorfilepos < 0) {
+            fclose();
+            throw std::ios_base::failure{"AutoFile ftell failed"};
+        }
+    }
 
     ~AutoFile() { fclose(); }
+
+    const std::vector<std::byte> m_xor;
+    size_t m_xorfilepos; // Only used if m_xor is specified to avoid ftell calls.
 
     // Disallow copies
     AutoFile(const AutoFile&) = delete;
