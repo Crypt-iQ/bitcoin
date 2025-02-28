@@ -304,6 +304,7 @@ BASE_SCRIPTS = [
     'p2p_ibd_stalling.py --v2transport',
     'p2p_net_deadlock.py --v1transport',
     'p2p_net_deadlock.py --v2transport',
+    'p2p_ibd_cmpct.py',
     'wallet_signmessagewithaddress.py',
     'rpc_signmessagewithprivkey.py',
     'rpc_generate.py',

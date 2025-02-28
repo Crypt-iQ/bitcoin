@@ -1176,6 +1176,7 @@ void PeerManagerImpl::RemoveBlockRequest(const uint256& hash, std::optional<Node
             m_peers_downloading_from--;
         }
         state.m_stalling_since = 0us;
+        LogDebug(BCLog::NET, "Reset m_stalling_for node_id=%d\n", node_id);
 
         range.first = mapBlocksInFlight.erase(range.first);
     }
@@ -4429,8 +4430,10 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                         req.indexes.push_back(i);
                 }
                 if (req.indexes.empty()) {
+                    LogDebug(BCLog::NET, "indexes empty: %d\n", pfrom.GetId());
                     fProcessBLOCKTXN = true;
                 } else if (first_in_flight) {
+                    LogDebug(BCLog::NET, "first_in_flight\n");
                     // We will try to round-trip any compact blocks we get on failure,
                     // as long as it's first...
                     req.blockhash = pindex->GetBlockHash();
@@ -4439,6 +4442,7 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                     (!pfrom.IsInboundConn() ||
                     IsBlockRequestedFromOutbound(blockhash) ||
                     already_in_flight < MAX_CMPCTBLOCKS_INFLIGHT_PER_BLOCK - 1)) {
+                    LogDebug(BCLog::NET, "Extra cmpct\n");
                     // ... or it's a hb relay peer and:
                     // - peer is outbound, or
                     // - we already have an outbound attempt in flight(so we'll take what we can get), or
@@ -4446,10 +4450,12 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                     req.blockhash = pindex->GetBlockHash();
                     MakeAndPushMessage(pfrom, NetMsgType::GETBLOCKTXN, req);
                 } else {
+                    LogDebug(BCLog::NET, "RemovedBlockRequest waiting for first_in_flight: %d\n", pfrom.GetId());
                     // Give up for this peer and wait for other peer(s)
                     RemoveBlockRequest(pindex->GetBlockHash(), pfrom.GetId());
                 }
             } else {
+                LogDebug(BCLog::NET, "Outer case\n");
                 // This block is either already in flight from a different
                 // peer, or this peer has too many blocks outstanding to
                 // download from.
