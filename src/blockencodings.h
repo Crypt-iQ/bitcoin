@@ -98,11 +98,15 @@ private:
     friend class PartiallyDownloadedBlock;
 
 protected:
-    std::vector<uint64_t> shorttxids;
-    std::vector<PrefilledTransaction> prefilledtxn;
+    // TODO: Move back and instead create a constructor that takes multiple prefilledtxn?
+    // std::vector<uint64_t> shorttxids;
+    // std::vector<PrefilledTransaction> prefilledtxn;
 
 public:
     static constexpr int SHORTTXIDS_LENGTH = 6;
+
+    std::vector<uint64_t> shorttxids;
+    std::vector<PrefilledTransaction> prefilledtxn;
 
     CBlockHeader header;
 
