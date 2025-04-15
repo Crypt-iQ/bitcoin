@@ -23,18 +23,11 @@
 #include <validationinterface.h>
 
 #include <ios>
+#include <iostream>
 #include <memory>
 #include <string>
 #include <utility>
 #include <vector>
-
-namespace {
-const TestingSetup* g_setup;
-
-uint256 g_tip;
-
-uint32_t g_nBits;
-} // namespace
 
 enum Command : uint8_t {
     SEND_CMPCTBLOCK,
@@ -43,32 +36,35 @@ enum Command : uint8_t {
     MINE_BLOCK,
 };
 
-void initialize_cmpctblock()
+void initialize_cmpctblock() {}
+
+FUZZ_TARGET(cmpctblock, .init = initialize_cmpctblock)
 {
-    static const auto testing_setup = MakeNoLogFileContext<const TestingSetup>(
+    // Moved from initialize_cmpctblock to reset the testing state every iteration.
+    // Snapshot fuzzing would be better here than having to mock out BlockMan.
+    const auto testing_setup = MakeNoLogFileContext<const TestingSetup>(
         /*chain_type=*/ChainType::REGTEST,
-        {.extra_args = {"-txreconciliation"}});
-    g_setup = testing_setup.get();
+        {.extra_args = {"-txreconciliation", "-testdatadir=/Volumes/RAM_DISK_4GB"}});
+    const TestingSetup* g_setup = testing_setup.get();
     for (int i = 0; i < 2 * COINBASE_MATURITY; i++) {
         MineBlock(g_setup->m_node, {});
     }
     g_setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
 
-    WITH_LOCK(::cs_main, g_tip = g_setup->m_node.chainman->ActiveChain().Tip()->GetBlockHash());
+    uint256 g_tip = WITH_LOCK(::cs_main, return g_setup->m_node.chainman->ActiveChain().Tip()->GetBlockHash());
 
-    // Record nBits so that the fuzzer doesn't need to guess it.
-    g_nBits = Params().GenesisBlock().nBits;
-}
+    uint32_t g_nBits = Params().GenesisBlock().nBits;
 
-FUZZ_TARGET(cmpctblock, .init = initialize_cmpctblock)
-{
     SeedRandomStateForTest(SeedRand::ZEROS);
-    FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
+    FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size()); 
 
     ConnmanTestMsg& connman = *static_cast<ConnmanTestMsg*>(g_setup->m_node.connman.get());
     auto& chainman = static_cast<TestChainstateManager&>(*g_setup->m_node.chainman);
     SetMockTime(1610000000); // any time to successfully reset ibd
     chainman.ResetIbd();
+
+    // Output the height to see that we're resetting the state properly.
+    //auto height = WITH_LOCK(::cs_main, return g_setup->m_node.chainman->ActiveChain().Height());
 
     // NOTE: The block headers that this fuzzer creates pollute global state in blockman.
     std::vector<std::shared_ptr<CBlock>> blocks;

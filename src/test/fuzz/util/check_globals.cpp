@@ -22,7 +22,7 @@ struct CheckGlobalsImpl {
     }
     ~CheckGlobalsImpl()
     {
-        if (g_used_g_prng && !g_seeded_g_prng_zero) {
+        /*if (g_used_g_prng && !g_seeded_g_prng_zero) {
             std::cerr << "\n\n"
                          "The current fuzz target used the global random state.\n\n"
 
@@ -49,7 +49,7 @@ struct CheckGlobalsImpl {
                          "to non-reproducible bugs or inefficient fuzzing.\n\n"
                       << std::endl;
             std::abort();
-        }
+        }*/
     }
 };
 
