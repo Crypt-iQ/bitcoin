@@ -228,6 +228,12 @@ extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv)
 int main(int argc, char** argv)
 {
     initialize();
+
+#ifdef SNAPSHOT_FUZZ
+    test_one_input({});
+    return 0;
+#endif
+
 #ifdef __AFL_LOOP
     // Enable AFL persistent mode. Requires compilation using afl-clang-fast++.
     // See fuzzing.md for details.
