@@ -9,6 +9,7 @@ add_library(test_fuzz STATIC EXCLUDE_FROM_ALL
   net.cpp
   ../fuzz.cpp
   ../util.cpp
+  ../snapshot_fuzz.cpp
 )
 
 target_link_libraries(test_fuzz
