@@ -29,13 +29,6 @@
 #include <utility>
 #include <vector>
 
-namespace {
-const TestingSetup* g_setup;
-uint256 g_tip;
-uint32_t g_nBits;
-uint32_t g_height;
-} // namespace
-
 // The list of possible fuzzer commands. Most of them are simply which protocol message to send over.
 // The exception is MINE_BLOCK which simply mines a new block.
 enum Command : uint8_t {
@@ -54,28 +47,7 @@ struct BlockInfo {
     uint32_t height;
 };
 
-void initialize_cmpctblock()
-{
-    static const auto testing_setup = MakeNoLogFileContext<const TestingSetup>(
-        /*chain_type=*/ChainType::REGTEST,
-        {.extra_args = {"-txreconciliation"}});
-    g_setup = testing_setup.get();
-    for (int i = 0; i < 2 * COINBASE_MATURITY; i++) {
-        MineBlock(g_setup->m_node, {});
-    }
-
-    // By registering the PeerManager, we can gain coverage if the BlockChecked callback in net_processing.cpp
-    // is invoked upon calls to SyncWithValidationInterfaceQueue.
-    g_setup->m_node.validation_signals->RegisterValidationInterface(g_setup->m_node.peerman.get());
-
-    g_setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
-
-    WITH_LOCK(::cs_main, g_tip = g_setup->m_node.chainman->ActiveChain().Tip()->GetBlockHash());
-    WITH_LOCK(::cs_main, g_height = g_setup->m_node.chainman->ActiveChain().Height());
-
-    // Record nBits so that the fuzzer doesn't need to guess it.
-    g_nBits = Params().GenesisBlock().nBits;
-}
+void initialize_cmpctblock() {}
 
 // This fuzz harness attempts to exercise the compact blocks protocol logic. It mainly does so by
 // creating valid headers and sending these via one of the connected peers. The fuzzer is restricted
@@ -92,6 +64,27 @@ void initialize_cmpctblock()
 // slows to a crawl.
 FUZZ_TARGET(cmpctblock, .init = initialize_cmpctblock)
 {
+    const auto testing_setup = MakeNoLogFileContext<const TestingSetup>(
+        /*chain_type=*/ChainType::REGTEST,
+        {.extra_args = {"-txreconciliation"}});
+    const TestingSetup* g_setup = testing_setup.get();
+    for (int i = 0; i < 2 * COINBASE_MATURITY; i++) {
+        MineBlock(g_setup->m_node, {});
+    }
+
+    uint256 g_tip;
+    uint32_t g_nBits;
+    uint32_t g_height;
+
+    g_setup->m_node.validation_signals->RegisterValidationInterface(g_setup->m_node.peerman.get());
+    g_setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
+
+    WITH_LOCK(::cs_main, g_tip = g_setup->m_node.chainman->ActiveChain().Tip()->GetBlockHash());
+    WITH_LOCK(::cs_main, g_height = g_setup->m_node.chainman->ActiveChain().Height());
+
+    // Record nBits so that the fuzzer doesn't need to guess it.
+    g_nBits = Params().GenesisBlock().nBits;
+
     SeedRandomStateForTest(SeedRand::ZEROS);
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
 
