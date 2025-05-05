@@ -14,6 +14,7 @@
 #include <sync.h>
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
+#include <test/fuzz/snapshot_fuzz.h>
 #include <test/fuzz/util.h>
 #include <test/fuzz/util/net.h>
 #include <test/util/mining.h>
@@ -25,6 +26,7 @@
 
 #include <ios>
 #include <memory>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -53,29 +55,6 @@ struct BlockInfo {
     uint256 hash;
     uint32_t height;
 };
-
-void initialize_cmpctblock()
-{
-    static const auto testing_setup = MakeNoLogFileContext<const TestingSetup>(
-        /*chain_type=*/ChainType::REGTEST,
-        {.extra_args = {"-txreconciliation"}});
-    g_setup = testing_setup.get();
-    for (int i = 0; i < 2 * COINBASE_MATURITY; i++) {
-        MineBlock(g_setup->m_node, {});
-    }
-
-    // By registering the PeerManager, we can gain coverage if the BlockChecked callback in net_processing.cpp
-    // is invoked upon calls to SyncWithValidationInterfaceQueue.
-    g_setup->m_node.validation_signals->RegisterValidationInterface(g_setup->m_node.peerman.get());
-
-    g_setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
-
-    WITH_LOCK(::cs_main, g_tip = g_setup->m_node.chainman->ActiveChain().Tip()->GetBlockHash());
-    WITH_LOCK(::cs_main, g_height = g_setup->m_node.chainman->ActiveChain().Height());
-
-    // Record nBits so that the fuzzer doesn't need to guess it.
-    g_nBits = Params().GenesisBlock().nBits;
-}
 
 void run_cmpctblock(FuzzBufferType buffer)
 {
@@ -318,14 +297,44 @@ void run_cmpctblock(FuzzBufferType buffer)
     g_setup->m_node.connman->StopNodes();
 }
 
+static void cmpctblock(snapshot_fuzz::Fuzz& fuzz)
+{
+    SeedRandomStateForTest(SeedRand::ZEROS);
+
+    const auto testing_setup = MakeNoLogFileContext<const TestingSetup>(
+        /*chain_type=*/ChainType::REGTEST,
+        {.extra_args = {"-txreconciliation"}});
+    g_setup = testing_setup.get();
+    for (int i = 0; i < 2 * COINBASE_MATURITY; i++) {
+        MineBlock(g_setup->m_node, {});
+    }
+
+    // By registering the PeerManager, we can gain coverage if the BlockChecked callback in net_processing.cpp
+    // is invoked upon calls to SyncWithValidationInterfaceQueue.
+    g_setup->m_node.validation_signals->RegisterValidationInterface(g_setup->m_node.peerman.get());
+
+    g_setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
+
+    WITH_LOCK(::cs_main, g_tip = g_setup->m_node.chainman->ActiveChain().Tip()->GetBlockHash());
+    WITH_LOCK(::cs_main, g_height = g_setup->m_node.chainman->ActiveChain().Height());
+
+    // Record nBits so that the fuzzer doesn't need to guess it.
+    g_nBits = Params().GenesisBlock().nBits;
+
+    // The code in the below run(...) will execute each fuzzing iteration, using the state prior to calling
+    // run(...) as the VM snapshot point. This allows us to setup slow global state once and restore a VM snapshot
+    // each fuzzing iteration instead of having to initiate the slow global state every time for non-determinism.
+    // Until the expensive setup calls have been mocked out (likely in disk access), snapshot fuzzing is a viable
+    // interim solution for fuzz harnesses to achieve good code coverage, non-determinism, and speed. 
+    fuzz.run([&](FuzzBufferType buffer) {
+        run_cmpctblock(buffer);
+    });
+}
+
 // This fuzz harness attempts to exercise the compact blocks protocol logic. It mainly does so by
 // creating valid headers and sending these via one of the connected peers. The fuzzer is restricted
 // in where it is creating mutations because it is restricted to an enum of commands. This allows us to
 // limit the mutations to specific parts such as not allowing unrelated p2p messages from being sent
 // (therefore limiting the number of useless iterations) or by choosing how the CMPCTBLOCK or BLOCKTXN
 // messages are structured.
-FUZZ_TARGET(cmpctblock, .init = initialize_cmpctblock)
-{
-    SeedRandomStateForTest(SeedRand::ZEROS);
-    run_cmpctblock(buffer);
-}
+SNAPSHOT_FUZZ_TARGET(cmpctblock)
