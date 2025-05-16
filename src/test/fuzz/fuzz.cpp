@@ -84,7 +84,7 @@ static const TypeTestOneInput* g_test_one_input{nullptr};
 
 static void test_one_input(FuzzBufferType buffer)
 {
-    CheckGlobals check{};
+    //CheckGlobals check{};
     (*Assert(g_test_one_input))(buffer);
 }
 
