@@ -112,6 +112,8 @@ void BCLog::Logger::ResetLimiter()
     StdLockGuard scoped_lock(m_cs);
     const auto now{NodeClock::now()};
     m_limiter.m_last_reset = now;
+    m_limiter.m_source_locations.clear();
+    m_limiter.m_suppressed_locations.clear();
 }
 
 void BCLog::Logger::DisableLogging()
