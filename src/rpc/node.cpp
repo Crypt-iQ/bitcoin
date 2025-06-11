@@ -107,6 +107,55 @@ static RPCHelpMan mockscheduler()
     };
 }
 
+static RPCHelpMan excessivelog()
+{
+    return RPCHelpMan{"excessivelog",
+        "\nLog an excessive amount of bytes to test the ratelimiting logic\n",
+        {
+            {"location", RPCArg::Type::NUM, RPCArg::Optional::NO, "Log source location (1-5)" },
+            {"num_bytes", RPCArg::Type::NUM, RPCArg::Optional::NO, "Number of bytes to log" },
+        },
+        RPCResult{RPCResult::Type::NONE, "", ""},
+        RPCExamples{""},
+        [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue
+{
+    int64_t num_bytes = request.params[1].getInt<int64_t>();
+    if (num_bytes <= 0 || num_bytes > 1024 * 1024 * 1024) {
+        // If the rate limiting logic is broken then all the bytes will be logged to disk
+        // Dont allow more than 1GiB
+        LogPrintf("%s\n", "will not log more than 1GiB");
+        return NullUniValue;
+    }
+
+    int64_t loc = request.params[0].getInt<int64_t>();
+    if (loc <= 0 || loc > 5) {
+        LogPrintf("%s\n", "only 5 locations available");
+        return NullUniValue;
+    }
+
+    std::string str(num_bytes - 1, 'a');
+    switch (loc) {
+    case 1:
+        LogPrintf("%s\n", str);
+        break;
+    case 2:
+        LogPrintf("%s\n", str);
+        break;
+    case 3:
+        LogPrintf("%s\n", str);
+        break;
+    case 4:
+        LogPrintf("%s\n", str);
+        break;
+    case 5:
+        LogPrintf("%s\n", str);
+        break;
+    }
+
+    return NullUniValue;
+},
+    };
+}
 static UniValue RPCLockedMemoryInfo()
 {
     LockedPool::Stats stats = LockedPoolManager::Instance().stats();
@@ -412,6 +461,7 @@ void RegisterNodeRPCCommands(CRPCTable& t)
         {"util", &getindexinfo},
         {"hidden", &setmocktime},
         {"hidden", &mockscheduler},
+        {"hidden", &excessivelog},
         {"hidden", &echo},
         {"hidden", &echojson},
         {"hidden", &echoipc},
