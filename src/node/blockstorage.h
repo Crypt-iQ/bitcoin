@@ -84,7 +84,7 @@ static constexpr uint32_t UNDO_DATA_DISK_OVERHEAD{STORAGE_HEADER_BYTES + uint256
 // we ever switch to another associative container, we need to either use a
 // container that has stable addressing (true of all std associative
 // containers), or make the key a `std::unique_ptr<CBlockIndex>`
-using BlockMap = std::unordered_map<uint256, CBlockIndex, BlockHasher>;
+//using BlockMap = std::unordered_map<uint256, CBlockIndex, BlockHasher>;
 
 struct CBlockIndexWorkComparator {
     bool operator()(const CBlockIndex* pa, const CBlockIndex* pb) const;
@@ -94,6 +94,8 @@ struct CBlockIndexHeightOnlyComparator {
     /* Only compares the height of two block indices, doesn't try to tie-break */
     bool operator()(const CBlockIndex* pa, const CBlockIndex* pb) const;
 };
+
+using BlockMap = std::map<uint256, CBlockIndex, CBlockIndexWorkComparator>;
 
 struct PruneLockInfo {
     int height_first{std::numeric_limits<int>::max()}; //! Height of earliest block that should be kept and not pruned
