@@ -176,7 +176,7 @@ BasicTestingSetup::BasicTestingSetup(const ChainType chainType, TestOpts opts)
         if (!TryCreateDirectories(m_path_root)) ExitFailure("Cannot create test data directory");
 
         // Print the test directory name if custom.
-        std::cout << "Test directory (will not be deleted): " << m_path_root << std::endl;
+        //std::cout << "Test directory (will not be deleted): " << m_path_root << std::endl;
     }
     m_args.ForceSetArg("-datadir", fs::PathToString(m_path_root));
     gArgs.ForceSetArg("-datadir", fs::PathToString(m_path_root));

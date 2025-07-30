@@ -24,7 +24,6 @@
 #include <util/time.h>
 #include <validationinterface.h>
 
-#include <cassert>
 #include <exception>
 #include <filesystem>
 #include <ios>
@@ -34,18 +33,16 @@
 #include <vector>
 
 namespace {
-const TestingSetup* g_setup;
+
+std::string dirstring{"-testdatadir="};
+
 uint256 g_tip;
 uint32_t g_nBits;
 uint32_t g_height;
+std::filesystem::path g_root_path;
+std::filesystem::path g_tmp_path;
 
-std::string dirstring = "-testdatadir=";
-std::filesystem::path root_path;
-std::filesystem::path tmp_path;
-} // namespace
-
-// The list of possible fuzzer commands. Most of them are simply which protocol message to send over.
-// The exception is MINE_BLOCK which simply mines a new block.
+//! The list of possible fuzzer commands.
 enum Command : uint8_t {
     CMPCTBLOCK,
     BLOCKTXN,
@@ -54,23 +51,22 @@ enum Command : uint8_t {
     MINE_BLOCK,
 };
 
-// One of these is created for every block the fuzz harness generates. It contains a
-// shared pointer to the block and additionally stores the block's hash and height.
+//! One of these is created for every block the fuzz harness generates.
 struct BlockInfo {
     std::shared_ptr<CBlock> block;
     uint256 hash;
     uint32_t height;
 };
 
+} // namespace
+
 void initialize_cmpctblock()
 {
-    root_path = std::filesystem::current_path() / "cmpctblock_init";
-    tmp_path = std::filesystem::current_path() / "cmpctblock_tmp";
+    g_root_path = std::filesystem::current_path() / "cmpctblock_init";
+    g_tmp_path = std::filesystem::current_path() / "cmpctblock_tmp";
+    std::filesystem::create_directory(g_root_path);
 
-    std::string root_string = dirstring + root_path.string();
-
-    assert(std::filesystem::create_directory(root_path));
-    assert(std::filesystem::create_directory(tmp_path));
+    auto root_string = dirstring + g_root_path.string();
 
     const auto initial_testing_setup = MakeNoLogFileContext<const TestingSetup>(
         /*chain_type=*/ChainType::REGTEST,
@@ -79,51 +75,40 @@ void initialize_cmpctblock()
     for (int i = 0; i < 2 * COINBASE_MATURITY; i++) {
         MineBlock(initial_testing_setup.get()->m_node, {});
     }
+
+    g_nBits = Params().GenesisBlock().nBits;
 }
 
-void run_cmpctblock(FuzzBufferType buffer)
+FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
 {
-    // ~CheckGlobalsImpl:
-    //  * g_used_system_time = true
+    SeedRandomStateForTest(SeedRand::ZEROS);
 
     // coins_db_in_memory
     // block_tree_db_in_memory
 
-    try  {
-        fs::remove_all(tmp_path);
-    } catch (const std::exception& e) {}
+    std::filesystem::remove_all(g_tmp_path);
+    std::filesystem::copy(g_root_path, g_tmp_path, std::filesystem::copy_options::recursive);
 
-    std::filesystem::copy(root_path, tmp_path, std::filesystem::copy_options::recursive);
-
-    std::string tmp_string = dirstring + tmp_path.string();
+    auto tmp_string = dirstring + g_tmp_path.string();
 
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
     const auto mock_start_time{1610000000};
 
-    static const auto testing_setup = MakeNoLogFileContext<const TestingSetup>(
+    const auto testing_setup = MakeNoLogFileContext<const TestingSetup>(
         /*chain_type=*/ChainType::REGTEST,
         {.extra_args = {tmp_string.c_str(),
-                        strprintf("-mocktime=%d", mock_start_time).c_str()}});
-    SetMockTime(mock_start_time);
-    g_setup = testing_setup.get();
+                        strprintf("-mocktime=%d", mock_start_time).c_str()}}); 
 
-    // By registering the PeerManager, we can gain coverage if the BlockChecked callback in net_processing.cpp
-    // is invoked upon calls to SyncWithValidationInterfaceQueue.
-    g_setup->m_node.validation_signals->RegisterValidationInterface(g_setup->m_node.peerman.get());
+    auto setup = testing_setup.get();
 
-    g_setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
+    setup->m_node.validation_signals->RegisterValidationInterface(setup->m_node.peerman.get());
+    setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
 
-    WITH_LOCK(::cs_main, g_tip = g_setup->m_node.chainman->ActiveChain().Tip()->GetBlockHash());
-    WITH_LOCK(::cs_main, g_height = g_setup->m_node.chainman->ActiveChain().Height());
+    WITH_LOCK(::cs_main, g_tip = setup->m_node.chainman->ActiveChain().Tip()->GetBlockHash());
+    WITH_LOCK(::cs_main, g_height = setup->m_node.chainman->ActiveChain().Height());
 
-    // Record nBits so that the fuzzer doesn't need to guess it.
-    g_nBits = Params().GenesisBlock().nBits;
-
-    //FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
-
-    ConnmanTestMsg& connman = *static_cast<ConnmanTestMsg*>(g_setup->m_node.connman.get());
-    auto& chainman = static_cast<TestChainstateManager&>(*g_setup->m_node.chainman);
-    //SetMockTime(1610000000); // any time to successfully reset ibd
+    ConnmanTestMsg& connman = *static_cast<ConnmanTestMsg*>(setup->m_node.connman.get());
+    auto& chainman = static_cast<TestChainstateManager&>(*setup->m_node.chainman);
     chainman.ResetIbd();
 
     std::vector<BlockInfo> info;
@@ -135,26 +120,18 @@ void run_cmpctblock(FuzzBufferType buffer)
     for (int i = 0; i < 3; i++) {
         peers.push_back(ConsumeNodeAsUniquePtr(fuzzed_data_provider, id++).release());
         CNode& p2p_node = *peers.back();
-
         FillNode(fuzzed_data_provider, connman, p2p_node);
-
         connman.AddTestNode(p2p_node);
     }
 
-    // We set the time here so that we are close enough to the tip to accept compact blocks from the peer and
-    // can bypass the CanDirectFetch check upon receipt of CMPCTBLOCK.
+    // Set time so that we will be close to the tip's time, some of the time.
     const auto mock_time = ConsumeTime(fuzzed_data_provider);
     SetMockTime(mock_time);
 
     auto create_block = [&]() {
-        CBlockHeader header;
-        header.nNonce = 0;
-
         uint256 prev;
         uint32_t height;
 
-        // Set hashPrevBlock to g_tip randomly some of the time and when the fuzzer hasn't yet created any blocks.
-        // Set it to a random, created block the rest of the time.
         if (fuzzed_data_provider.ConsumeBool() || info.size() == 0) {
             prev = g_tip;
             height = g_height + 1;
@@ -164,18 +141,19 @@ void run_cmpctblock(FuzzBufferType buffer)
             height = info[index].height + 1;
         }
 
+        const auto new_time = WITH_LOCK(::cs_main, return setup->m_node.chainman->ActiveChain().Tip()->GetMedianTimePast() + 1);
+
+        CBlockHeader header;
+        header.nNonce = 0;
         header.hashPrevBlock = prev;
         header.nBits = g_nBits;
-
-        const auto new_time = WITH_LOCK(::cs_main, return g_setup->m_node.chainman->ActiveChain().Tip()->GetMedianTimePast() + 1);
         header.nTime = new_time;
         header.nVersion = fuzzed_data_provider.ConsumeIntegral<int32_t>();
 
         std::shared_ptr<CBlock> block = std::make_shared<CBlock>();
         *block = header;
 
-        // Randomly provide a valid BIP34 coinbase. This will let the fuzzer hit cases that depend on valid blocks
-        // to be processed.
+        // Randomly provide a valid BIP34 coinbase.
         if (fuzzed_data_provider.ConsumeBool()) {
             CMutableTransaction coinbaseTx;
 
@@ -249,8 +227,7 @@ void run_cmpctblock(FuzzBufferType buffer)
                 cmpctBlock.prefilledtxn.push_back(std::move(prefilledtx));
             }
 
-            // Erase from the front of shorttxids since these transactions have been prefilled. This is hacky -- we
-            // could instead introduce a new test-only constructor that dictates what transactions are prefilled.
+            // Erase from the front of shorttxids since these transactions have been prefilled.
             for (size_t i = 0; i < num_prefilled - 1; i++) {
                 cmpctBlock.shorttxids.erase(cmpctBlock.shorttxids.begin());
             }
@@ -264,32 +241,19 @@ void run_cmpctblock(FuzzBufferType buffer)
             // If no blocks exist, return.
             size_t num_blocks = info.size();
             if (num_blocks == 0) {
-                break;
+                return;
             }
-
-            // Here, we'll send a BLOCKTXN message regardless if it was requested or not. We'll loop through the block's
-            // transactions and pick some to provide in the message. There are no gaps in the set of transactions that we
-            // send over. In the future, the fuzzer could fill in the missing transactions in a more random way.
 
             // Fetch a pre-existing block and determine which transactions to send over.
             size_t index = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, num_blocks - 1);
-
             BlockInfo block_info = info[index];
-
             BlockTransactions block_txn;
             block_txn.blockhash = block_info.hash;
-
             std::shared_ptr<CBlock> cblock = block_info.block;
 
             size_t num_txs = cblock->vtx.size();
 
             if (num_txs > 1) {
-                // If the fuzzer has sent over a CMPCTBLOCK in the same fuzzing iteration, it is possible that this BLOCKTXN
-                // may be viewed as a response to a GETBLOCKTXN. If that is the case, the fuzzer may guess the correct number
-                // of missing transactions to fill in and thus gain even more coverage when FillBlock is called.
-                //
-                // Select which txns from the block to send. Since the first prefilled txn is already filled-in at index=0,
-                // we only do this if the number of transactions in the block is greater than 1.
                 for (size_t i = 1; i < num_txs; i++) {
                     block_txn.txn.push_back(cblock->vtx[i]);
                 }
@@ -303,15 +267,12 @@ void run_cmpctblock(FuzzBufferType buffer)
         case HEADERS: {
             size_t num_blocks = info.size();
             if (num_blocks == 0) {
-                break;
+                return;
             }
 
             // Choose a random, existing block that the fuzzer has created and send a HEADERS message for it.
-            // Doing this allows us to somewhat fuzz mapBlocksInFlight and can allow the fuzzer to hit an additional
-            // branch in compact-blocks processing where the block has been requested but not via compact blocks.
             size_t index = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, num_blocks - 1);
             CBlock block = *info[index].block;
-
             std::vector<CBlock> headers;
             headers.push_back(block);
 
@@ -333,12 +294,11 @@ void run_cmpctblock(FuzzBufferType buffer)
             BlockInfo blockinfo = create_block();
             info.push_back(blockinfo);
 
-            break;
+            return;
         }
         }
 
         CNode& random_node = *PickValue(fuzzed_data_provider, peers);
-
         connman.FlushSendBuffer(random_node);
         (void)connman.ReceiveMsgFrom(random_node, std::move(net_msg));
 
@@ -350,22 +310,10 @@ void run_cmpctblock(FuzzBufferType buffer)
                 more_work = connman.ProcessMessagesOnce(random_node);
             } catch (const std::ios_base::failure&) {
             }
-            g_setup->m_node.peerman->SendMessages(&random_node);
+            setup->m_node.peerman->SendMessages(&random_node);
         }
     }
 
-    g_setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
-    g_setup->m_node.connman->StopNodes();
-}
-
-// This fuzz harness attempts to exercise the compact blocks protocol logic. It mainly does so by
-// creating valid headers and sending these via one of the connected peers. The fuzzer is restricted
-// in where it is creating mutations because it is restricted to an enum of commands. This allows us to
-// limit the mutations to specific parts such as not allowing unrelated p2p messages from being sent
-// (therefore limiting the number of useless iterations) or by choosing how the CMPCTBLOCK or BLOCKTXN
-// messages are structured.
-FUZZ_TARGET(cmpctblock, .init = initialize_cmpctblock)
-{
-    SeedRandomStateForTest(SeedRand::ZEROS);
-    run_cmpctblock(buffer);
+    setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
+    setup->m_node.connman->StopNodes();
 }
