@@ -20,9 +20,13 @@
 #include <test/util/net.h>
 #include <test/util/setup_common.h>
 #include <test/util/validation.h>
+#include <util/fs_helpers.h>
 #include <util/time.h>
 #include <validationinterface.h>
 
+#include <cassert>
+#include <exception>
+#include <filesystem>
 #include <ios>
 #include <memory>
 #include <string>
@@ -34,6 +38,10 @@ const TestingSetup* g_setup;
 uint256 g_tip;
 uint32_t g_nBits;
 uint32_t g_height;
+
+std::string dirstring = "-testdatadir=";
+std::filesystem::path root_path;
+std::filesystem::path tmp_path;
 } // namespace
 
 // The list of possible fuzzer commands. Most of them are simply which protocol message to send over.
@@ -56,13 +64,48 @@ struct BlockInfo {
 
 void initialize_cmpctblock()
 {
+    root_path = std::filesystem::current_path() / "cmpctblock_init";
+    tmp_path = std::filesystem::current_path() / "cmpctblock_tmp";
+
+    std::string root_string = dirstring + root_path.string();
+
+    assert(std::filesystem::create_directory(root_path));
+    assert(std::filesystem::create_directory(tmp_path));
+
+    const auto initial_testing_setup = MakeNoLogFileContext<const TestingSetup>(
+        /*chain_type=*/ChainType::REGTEST,
+        {.extra_args = {root_string.c_str()}});
+
+    for (int i = 0; i < 2 * COINBASE_MATURITY; i++) {
+        MineBlock(initial_testing_setup.get()->m_node, {});
+    }
+}
+
+void run_cmpctblock(FuzzBufferType buffer)
+{
+    // ~CheckGlobalsImpl:
+    //  * g_used_system_time = true
+
+    // coins_db_in_memory
+    // block_tree_db_in_memory
+
+    try  {
+        fs::remove_all(tmp_path);
+    } catch (const std::exception& e) {}
+
+    std::filesystem::copy(root_path, tmp_path, std::filesystem::copy_options::recursive);
+
+    std::string tmp_string = dirstring + tmp_path.string();
+
+    FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
+    const auto mock_start_time{1610000000};
+
     static const auto testing_setup = MakeNoLogFileContext<const TestingSetup>(
         /*chain_type=*/ChainType::REGTEST,
-        {.extra_args = {"-txreconciliation"}});
+        {.extra_args = {tmp_string.c_str(),
+                        strprintf("-mocktime=%d", mock_start_time).c_str()}});
+    SetMockTime(mock_start_time);
     g_setup = testing_setup.get();
-    for (int i = 0; i < 2 * COINBASE_MATURITY; i++) {
-        MineBlock(g_setup->m_node, {});
-    }
 
     // By registering the PeerManager, we can gain coverage if the BlockChecked callback in net_processing.cpp
     // is invoked upon calls to SyncWithValidationInterfaceQueue.
@@ -75,15 +118,12 @@ void initialize_cmpctblock()
 
     // Record nBits so that the fuzzer doesn't need to guess it.
     g_nBits = Params().GenesisBlock().nBits;
-}
 
-void run_cmpctblock(FuzzBufferType buffer)
-{
-    FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
+    //FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
 
     ConnmanTestMsg& connman = *static_cast<ConnmanTestMsg*>(g_setup->m_node.connman.get());
     auto& chainman = static_cast<TestChainstateManager&>(*g_setup->m_node.chainman);
-    SetMockTime(1610000000); // any time to successfully reset ibd
+    //SetMockTime(1610000000); // any time to successfully reset ibd
     chainman.ResetIbd();
 
     std::vector<BlockInfo> info;
