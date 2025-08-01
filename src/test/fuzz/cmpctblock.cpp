@@ -24,7 +24,6 @@
 #include <util/time.h>
 #include <validationinterface.h>
 
-#include <exception>
 #include <filesystem>
 #include <ios>
 #include <memory>
@@ -34,15 +33,14 @@
 
 namespace {
 
-std::string dirstring{"-testdatadir="};
-
 uint256 g_tip;
 uint32_t g_nBits;
 uint32_t g_height;
-std::filesystem::path g_root_path;
+std::string g_dirstring{"-testdatadir="};
+std::filesystem::path g_cached_path;
 std::filesystem::path g_tmp_path;
 
-//! The list of possible fuzzer commands.
+//! List of fuzzer commands.
 enum Command : uint8_t {
     CMPCTBLOCK,
     BLOCKTXN,
@@ -51,7 +49,7 @@ enum Command : uint8_t {
     MINE_BLOCK,
 };
 
-//! One of these is created for every block the fuzz harness generates.
+//! One for each block the fuzzer generates.
 struct BlockInfo {
     std::shared_ptr<CBlock> block;
     uint256 hash;
@@ -62,15 +60,15 @@ struct BlockInfo {
 
 void initialize_cmpctblock()
 {
-    g_root_path = std::filesystem::current_path() / "cmpctblock_init";
+    g_cached_path = std::filesystem::current_path() / "cmpctblock_cached";
     g_tmp_path = std::filesystem::current_path() / "cmpctblock_tmp";
-    std::filesystem::create_directory(g_root_path);
+    std::filesystem::create_directory(g_cached_path);
+    auto cached_string = g_dirstring + g_cached_path.string();
 
-    auto root_string = dirstring + g_root_path.string();
-
+    // Create a TestingSetup, mine blocks, and cache the datadir.
     const auto initial_testing_setup = MakeNoLogFileContext<const TestingSetup>(
         /*chain_type=*/ChainType::REGTEST,
-        {.extra_args = {root_string.c_str()}});
+        {.extra_args = {cached_string.c_str()}});
 
     for (int i = 0; i < 2 * COINBASE_MATURITY; i++) {
         MineBlock(initial_testing_setup.get()->m_node, {});
@@ -79,54 +77,53 @@ void initialize_cmpctblock()
     g_nBits = Params().GenesisBlock().nBits;
 }
 
+// TODO: ?
+// coins_db_in_memory
+// block_tree_db_in_memory
+
 FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
 {
     SeedRandomStateForTest(SeedRand::ZEROS);
-
-    // coins_db_in_memory
-    // block_tree_db_in_memory
-
-    std::filesystem::remove_all(g_tmp_path);
-    std::filesystem::copy(g_root_path, g_tmp_path, std::filesystem::copy_options::recursive);
-
-    auto tmp_string = dirstring + g_tmp_path.string();
-
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
-    const auto mock_start_time{1610000000};
 
+    // Remove the temporary datadir and copy the datadir created in initialize_cmpctblock.
+    std::filesystem::remove_all(g_tmp_path);
+    std::filesystem::copy(g_cached_path, g_tmp_path, std::filesystem::copy_options::recursive);
+
+    // Create a TestingSetup using the copied datadir and set a mock time. The mock time must be
+    // set here to avoid fuzzer-related warnings about non-determinism.
+    auto tmp_string = g_dirstring + g_tmp_path.string();
+    const auto mock_start_time{1610000000};
     const auto testing_setup = MakeNoLogFileContext<const TestingSetup>(
         /*chain_type=*/ChainType::REGTEST,
         {.extra_args = {tmp_string.c_str(),
                         strprintf("-mocktime=%d", mock_start_time).c_str()}}); 
 
+    // Register PeerManager so the BlockChecked callback can be invoked. Also, reset IBD.
     auto setup = testing_setup.get();
-
     setup->m_node.validation_signals->RegisterValidationInterface(setup->m_node.peerman.get());
     setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
-
     WITH_LOCK(::cs_main, g_tip = setup->m_node.chainman->ActiveChain().Tip()->GetBlockHash());
     WITH_LOCK(::cs_main, g_height = setup->m_node.chainman->ActiveChain().Height());
-
-    ConnmanTestMsg& connman = *static_cast<ConnmanTestMsg*>(setup->m_node.connman.get());
     auto& chainman = static_cast<TestChainstateManager&>(*setup->m_node.chainman);
     chainman.ResetIbd();
 
-    std::vector<BlockInfo> info;
-
-    LOCK(NetEventsInterface::g_msgproc_mutex);
+    LOCK(NetEventsInterface::g_msgproc_mutex); 
 
     std::vector<CNode*> peers;
-    static NodeId id{0};
-    for (int i = 0; i < 3; i++) {
-        peers.push_back(ConsumeNodeAsUniquePtr(fuzzed_data_provider, id++).release());
+    auto& connman = *static_cast<ConnmanTestMsg*>(setup->m_node.connman.get()); 
+    for (int i = 0; i < 3; ++i) {
+        peers.push_back(ConsumeNodeAsUniquePtr(fuzzed_data_provider, i).release());
         CNode& p2p_node = *peers.back();
         FillNode(fuzzed_data_provider, connman, p2p_node);
         connman.AddTestNode(p2p_node);
     }
 
-    // Set time so that we will be close to the tip's time, some of the time.
-    const auto mock_time = ConsumeTime(fuzzed_data_provider);
-    SetMockTime(mock_time);
+    // Set time so that we might be close to the tip's time.
+    SetMockTime(ConsumeTime(fuzzed_data_provider));
+
+    // Stores blocks generated this iteration.
+    std::vector<BlockInfo> info;
 
     auto create_block = [&]() {
         uint256 prev;
@@ -156,17 +153,15 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
         // Randomly provide a valid BIP34 coinbase.
         if (fuzzed_data_provider.ConsumeBool()) {
             CMutableTransaction coinbaseTx;
-
             coinbaseTx.vin.resize(1);
             coinbaseTx.vin[0].prevout.SetNull();
             coinbaseTx.vout.resize(1);
             coinbaseTx.vout[0].scriptPubKey = CScript() << OP_TRUE;
             coinbaseTx.vout[0].nValue = 100; // Any amount is fine for now.
             coinbaseTx.vin[0].scriptSig = CScript() << height << OP_0;
-
             block->vtx.push_back(MakeTransactionRef(coinbaseTx));
         } else {
-            // Otherwise, just fill the block with (likely invalid) transactions.
+            // Otherwise, fill the block with (likely invalid) transactions.
             uint8_t num_txns = fuzzed_data_provider.ConsumeIntegralInRange<uint8_t>(1, 10);
             for (int i = 0; i < num_txns; i++) {
                 CMutableTransaction tx = ConsumeTransaction(fuzzed_data_provider, std::nullopt);
@@ -190,12 +185,11 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
     {
         CSerializedNetMsg net_msg;
 
-        uint8_t fuzzed_command = fuzzed_data_provider.ConsumeIntegralInRange<uint8_t>(CMPCTBLOCK, MINE_BLOCK);
-        switch (fuzzed_command) {
+        switch (fuzzed_data_provider.ConsumeIntegralInRange<uint8_t>(CMPCTBLOCK, MINE_BLOCK)) {
         case CMPCTBLOCK: {
             std::shared_ptr<CBlock> cblock;
 
-            // Sometimes pick from an existing block and the rest of the time create a new block.
+            // Pick an existing block or create a new block.
             if (fuzzed_data_provider.ConsumeBool() && info.size() != 0) {
                 size_t index = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, info.size() - 1);
                 cblock = info[index].block;
@@ -210,24 +204,20 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
 
             size_t num_txs = cblock->vtx.size();
             if (fuzzed_data_provider.ConsumeBool() || num_txs == 1) {
-                // Some of the time, don't modify the compact block that the constructor makes.
                 net_msg = NetMsg::Make(NetMsgType::CMPCTBLOCK, cmpctBlock);
                 break;
             }
 
-            // The rest of the time, populate prefilledtxns and shorttxids while keeping hashMerkleRoot the same.
-            // Choose a random number of PrefilledTransaction to include, starting in-order from vtx[1].
+            // Populate prefilledtxns.
             size_t num_prefilled = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(2, num_txs);
 
             for (size_t i = 1; i < num_prefilled; i++) {
                 CTransactionRef txref = cblock->vtx[i];
-
-                // TODO: Fuzz PrefilledTransaction index field.
                 PrefilledTransaction prefilledtx = {/*index=*/0, txref};
                 cmpctBlock.prefilledtxn.push_back(std::move(prefilledtx));
             }
 
-            // Erase from the front of shorttxids since these transactions have been prefilled.
+            // Erase from the front of shorttxids since these have been prefilled.
             for (size_t i = 0; i < num_prefilled - 1; i++) {
                 cmpctBlock.shorttxids.erase(cmpctBlock.shorttxids.begin());
             }
@@ -244,7 +234,7 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
                 return;
             }
 
-            // Fetch a pre-existing block and determine which transactions to send over.
+            // Fetch an existing block and randomly choose transactions to send over.
             size_t index = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, num_blocks - 1);
             BlockInfo block_info = info[index];
             BlockTransactions block_txn;
@@ -252,7 +242,6 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
             std::shared_ptr<CBlock> cblock = block_info.block;
 
             size_t num_txs = cblock->vtx.size();
-
             if (num_txs > 1) {
                 for (size_t i = 1; i < num_txs; i++) {
                     block_txn.txn.push_back(cblock->vtx[i]);
@@ -270,7 +259,7 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
                 return;
             }
 
-            // Choose a random, existing block that the fuzzer has created and send a HEADERS message for it.
+            // Choose an existing block and send a HEADERS message for it.
             size_t index = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, num_blocks - 1);
             CBlock block = *info[index].block;
             std::vector<CBlock> headers;
