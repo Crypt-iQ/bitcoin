@@ -9,6 +9,7 @@
 #include <net_processing.h>
 #include <pow.h>
 #include <protocol.h>
+#include <random.h>
 #include <script/script.h>
 #include <streams.h>
 #include <sync.h>
@@ -23,6 +24,7 @@
 #include <test/util/txmempool.h>
 #include <test/util/validation.h>
 #include <util/fs_helpers.h>
+#include <util/strencodings.h>
 #include <util/time.h>
 #include <validationinterface.h>
 
@@ -31,6 +33,8 @@
 #include <string>
 #include <utility>
 #include <vector>
+
+using namespace util::hex_literals;
 
 namespace {
 
@@ -64,12 +68,29 @@ public:
         shorttxids.erase(shorttxids.begin() + index);
     }
 };
+//! Class to delete the statically-named datadir at the end of a fuzzing run.
+class FuzzedDirectoryWrapper
+{
+private:
+    fs::path staticdir;
+
+public:
+    FuzzedDirectoryWrapper(fs::path name) : staticdir(name) {}
+
+    ~FuzzedDirectoryWrapper()
+    {
+        fs::remove_all(staticdir);
+    }
+};
 
 } // namespace
 
 void initialize_cmpctblock() {
+    std::vector<unsigned char> random_path_suffix(10);
+    GetStrongRandBytes(random_path_suffix);
     std::string testdatadir = "-testdatadir=";
-    g_cached_path = fs::temp_directory_path() / "cmpctblock_cached";
+    std::string staticdir = "cmpctblock_cached" + HexStr(random_path_suffix);
+    g_cached_path = fs::temp_directory_path() / staticdir;
     auto cached_datadir_arg = testdatadir + g_cached_path.string();
 
     const auto initial_setup = MakeNoLogFileContext<const TestingSetup>(
@@ -77,6 +98,8 @@ void initialize_cmpctblock() {
         {.extra_args = {cached_datadir_arg.c_str()},
          .coins_db_in_memory = false,
          .block_tree_db_in_memory = false});
+
+    static const FuzzedDirectoryWrapper wrapper(g_cached_path);
 
     SetMockTime(Params().GenesisBlock().Time());
 
