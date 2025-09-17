@@ -179,6 +179,11 @@ bool CBlockIndexHeightOnlyComparator::operator()(const CBlockIndex* pa, const CB
     return pa->nHeight < pb->nHeight;
 }
 
+bool CBlockIndexBlockHashComparator::operator()(const CBlockIndex* pa, const CBlockIndex* pb) const
+{
+    return UintToArith256(pa->GetBlockHash()) < UintToArith256(pb->GetBlockHash());
+}
+
 std::vector<CBlockIndex*> BlockManager::GetAllBlockIndices()
 {
     AssertLockHeld(cs_main);
