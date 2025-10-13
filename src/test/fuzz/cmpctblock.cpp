@@ -144,7 +144,7 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
 
     std::vector<CNode*> peers;
     auto& connman = *static_cast<ConnmanTestMsg*>(setup->m_node.connman.get());
-    for (int i = 0; i < 3; ++i) {
+    for (int i = 0; i < 4; ++i) {
         peers.push_back(ConsumeNodeAsUniquePtr(fuzzed_data_provider, i).release());
         CNode& p2p_node = *peers.back();
         FillNode(fuzzed_data_provider, connman, p2p_node);
