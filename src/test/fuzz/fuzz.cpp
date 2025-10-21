@@ -225,6 +225,9 @@ extern "C" int LLVMFuzzerInitialize(int* argc, char*** argv)
     return 0;
 }
 
+__AFL_COVERAGE();
+__AFL_COVERAGE_START_OFF();
+
 #if defined(PROVIDE_FUZZ_MAIN_FUNCTION)
 int main(int argc, char** argv)
 {

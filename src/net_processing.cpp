@@ -1257,6 +1257,7 @@ void PeerManagerImpl::MaybeSetPeerAsAnnouncingHeaderAndIDs(NodeId nodeid)
         return;
     }
 
+    __AFL_COVERAGE_ON();
     int num_outbound_hb_peers = 0;
     for (std::list<NodeId>::iterator it = lNodesAnnouncingHeaderAndIDs.begin(); it != lNodesAnnouncingHeaderAndIDs.end(); it++) {
         if (*it == nodeid) {
@@ -1298,6 +1299,7 @@ void PeerManagerImpl::MaybeSetPeerAsAnnouncingHeaderAndIDs(NodeId nodeid)
         lNodesAnnouncingHeaderAndIDs.push_back(pfrom->GetId());
         return true;
     });
+    __AFL_COVERAGE_OFF();
 }
 
 bool PeerManagerImpl::TipMayBeStale()
@@ -1982,6 +1984,7 @@ void PeerManagerImpl::BlockDisconnected(const std::shared_ptr<const CBlock> &blo
  */
 void PeerManagerImpl::NewPoWValidBlock(const CBlockIndex *pindex, const std::shared_ptr<const CBlock>& pblock)
 {
+    __AFL_COVERAGE_ON();
     auto pcmpctblock = std::make_shared<const CBlockHeaderAndShortTxIDs>(*pblock, FastRandomContext().rand64());
 
     LOCK(cs_main);
@@ -2029,6 +2032,7 @@ void PeerManagerImpl::NewPoWValidBlock(const CBlockIndex *pindex, const std::sha
             state.pindexBestHeaderSent = pindex;
         }
     });
+    __AFL_COVERAGE_OFF();
 }
 
 /**
@@ -3329,6 +3333,7 @@ void PeerManagerImpl::ProcessCompactBlockTxns(CNode& pfrom, Peer& peer, const Bl
             return;
         }
 
+        __AFL_COVERAGE_ON();
         PartiallyDownloadedBlock& partialBlock = *range_flight.first->second.second->partialBlock;
 
         if (partialBlock.header.IsNull()) {
@@ -3385,6 +3390,7 @@ void PeerManagerImpl::ProcessCompactBlockTxns(CNode& pfrom, Peer& peer, const Bl
         // in compact block optimistic reconstruction handling.
         ProcessBlock(pfrom, pblock, /*force_processing=*/true, /*min_pow_checked=*/true);
     }
+    __AFL_COVERAGE_OFF();
     return;
 }
 
@@ -4427,6 +4433,7 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
 
         // We want to be a bit conservative just to be extra careful about DoS
         // possibilities in compact block processing...
+        __AFL_COVERAGE_ON();
         if (pindex->nHeight <= m_chainman.ActiveChain().Height() + 2) {
             if ((already_in_flight < MAX_CMPCTBLOCKS_INFLIGHT_PER_BLOCK && nodestate->vBlocksInFlight.size() < MAX_BLOCKS_IN_TRANSIT_PER_PEER) ||
                  requested_block_from_this_peer) {
@@ -4562,6 +4569,7 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
                 RemoveBlockRequest(pblock->GetHash(), std::nullopt);
             }
         }
+        __AFL_COVERAGE_OFF();
         return;
     }
 
