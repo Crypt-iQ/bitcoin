@@ -171,7 +171,7 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
         // If the mempool is non-empty, choose a mempool outpoint. Otherwise, choose a coinbase.
         COutPoint outpoint;
         unsigned long mempool_size = setup->m_node.mempool->size();
-        if (mempool_size != 0) {
+        if (fuzzed_data_provider.ConsumeBool() && mempool_size != 0) {
             size_t random_idx = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, mempool_size - 1);
             LOCK(setup->m_node.mempool->cs);
             outpoint = COutPoint(setup->m_node.mempool->txns_randomized[random_idx].second->GetSharedTx()->GetHash(), 0);
@@ -239,20 +239,27 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
         coinbase_tx.vout[0].nValue = COIN;
         block->vtx.push_back(MakeTransactionRef(coinbase_tx));
 
-        // Add a tx from mempool. Since we do not include parents, it may be an invalid block.
         const auto mempool_size = setup->m_node.mempool->size();
         if (fuzzed_data_provider.ConsumeBool() && mempool_size != 0) {
-            LOCK(setup->m_node.mempool->cs);
+            // Add txns from the mempool. Since we do not include parents, it may be an invalid block.
+            size_t num_txns = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(1, mempool_size);
             size_t random_idx = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, mempool_size - 1);
-            CTransactionRef mempool_tx = setup->m_node.mempool->txns_randomized[random_idx].second->GetSharedTx();
-            block->vtx.push_back(mempool_tx);
+
+            LOCK(setup->m_node.mempool->cs);
+            for (int i = random_idx; i < random_idx + num_txns; ++i) {
+                CTransactionRef mempool_tx = setup->m_node.mempool->txns_randomized[i % mempool_size].second->GetSharedTx();
+                block->vtx.push_back(mempool_tx);
+            }
         }
 
-        // Create and add a (possibly invalid) tx that is not in the mempool.
+        // Create and add (possibly invalid) txns that are not in the mempool.
         if (fuzzed_data_provider.ConsumeBool()) {
-            CTransactionRef non_mempool_tx = create_tx();
-            if (non_mempool_tx != nullptr) {
-                block->vtx.push_back(non_mempool_tx);
+            size_t new_txns = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(1, 10);
+            for (int i = 0; i < new_txns; ++i) {
+                CTransactionRef non_mempool_tx = create_tx();
+                if (non_mempool_tx != nullptr) {
+                    block->vtx.push_back(non_mempool_tx);
+                }
             }
         }
 
