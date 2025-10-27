@@ -149,6 +149,10 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
         CNode& p2p_node = *peers.back();
         FillNode(fuzzed_data_provider, connman, p2p_node);
         connman.AddTestNode(p2p_node);
+        if (p2p_node.fDisconnect) {
+            // If any peers failed the version-verack handshake, return early.
+            return;
+        }
     }
 
     // Stores blocks generated this iteration.
