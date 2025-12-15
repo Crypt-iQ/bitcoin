@@ -30,7 +30,7 @@ namespace {
 //! Fee each created tx will pay.
 const CAmount AMOUNT_FEE{1000};
 //! Cached coinbases that each iteration can copy and use.
-std::vector<COutPoint> g_mature_coinbase;
+//std::vector<COutPoint> g_mature_coinbase;
 //! Constant value used to create valid headers.
 uint32_t g_nBits;
 //! Cached path to the datadir created during init.
@@ -74,56 +74,36 @@ public:
 
 } // namespace
 
-void initialize_cmpctblock()
-{
-    std::vector<unsigned char> random_path_suffix(10);
-    GetStrongRandBytes(random_path_suffix);
-    std::string testdatadir = "-testdatadir=";
-    std::string staticdir = "cmpctblock_cached" + HexStr(random_path_suffix);
-    g_cached_path = fs::temp_directory_path() / staticdir;
-    auto cached_datadir_arg = testdatadir + fs::PathToString(g_cached_path);
-
-    const auto initial_setup = MakeNoLogFileContext<const TestingSetup>(
-        /*chain_type=*/ChainType::REGTEST,
-        {.extra_args = {cached_datadir_arg.c_str()},
-         .coins_db_in_memory = false,
-         .block_tree_db_in_memory = false});
-
-    static const FuzzedDirectoryWrapper wrapper(g_cached_path);
-
-    SetMockTime(Params().GenesisBlock().Time());
-
-    node::BlockAssembler::Options options;
-    options.coinbase_output_script = P2WSH_OP_TRUE;
-
-    for (int i = 0; i < 2 * COINBASE_MATURITY; ++i) {
-        COutPoint prevout{MineBlock(initial_setup->m_node, options)};
-        if (i < COINBASE_MATURITY) {
-            g_mature_coinbase.push_back(prevout);
-        }
-    }
-
-    initial_setup->m_node.chainman->ActiveChainstate().ForceFlushStateToDisk();
-    g_nBits = Params().GenesisBlock().nBits;
-}
+void initialize_cmpctblock() { }
 
 FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
 {
     SeedRandomStateForTest(SeedRand::ZEROS);
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
 
-    std::string fuzzcopydatadir = "-fuzzcopydatadir=";
-    auto copy_datadir_arg = fuzzcopydatadir + fs::PathToString(g_cached_path);
+    std::vector<COutPoint> g_mature_coinbase;
+
     const auto mock_start_time{1610000000};
 
     const auto testing_setup = MakeNoLogFileContext<const TestingSetup>(
         /*chain_type=*/ChainType::REGTEST,
-        {.extra_args = {copy_datadir_arg.c_str(),
-                        strprintf("-mocktime=%d", mock_start_time).c_str()},
-         .coins_db_in_memory = false,
-         .block_tree_db_in_memory = false,
+        {.extra_args = {strprintf("-mocktime=%d", mock_start_time).c_str()},
+         .coins_db_in_memory = true,
+         .block_tree_db_in_memory = true,
          .setup_validation_interface = false,
          .setup_validation_interface_no_scheduler = true});
+
+    node::BlockAssembler::Options options;
+    options.coinbase_output_script = P2WSH_OP_TRUE;
+
+    for (int i = 0; i < 2 * COINBASE_MATURITY; ++i) {
+        COutPoint prevout{MineBlock(testing_setup->m_node, options)};
+        if (i < COINBASE_MATURITY) {
+            g_mature_coinbase.push_back(prevout);
+        }
+    }
+
+    g_nBits = Params().GenesisBlock().nBits;
 
     auto setup = testing_setup.get();
 
