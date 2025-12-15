@@ -14,6 +14,7 @@
 #include <kernel/cs_main.h>
 #include <kernel/messagestartchars.h>
 #include <primitives/block.h>
+#include <serialize.h>
 #include <streams.h>
 #include <sync.h>
 #include <uint256.h>
@@ -170,6 +171,287 @@ struct BlockfileCursor {
 
 std::ostream& operator<<(std::ostream& os, const BlockfileCursor& cursor);
 
+class BlockStorageWriter
+{
+public:
+    virtual ~BlockStorageWriter() = default;
+
+    virtual void write(std::span<const std::byte> src) = 0;
+
+    virtual void write_buffer(std::span<std::byte> src) = 0;
+
+    virtual int fclose() = 0;
+
+    virtual bool IsValid() = 0;
+
+    template <typename S>
+    BlockStorageWriter& operator<<(const S& obj)
+    {
+        ::Serialize(*this, obj);
+        return *this;
+    }
+};
+
+class FileBlockStorageWriter : public BlockStorageWriter
+{
+private:
+    AutoFile m_file;
+public:
+    FileBlockStorageWriter(const FlatFilePos& pos, FlatFileSeq undo_file_seq, const Obfuscation& obfuscation)
+        : m_file{AutoFile{undo_file_seq.Open(pos, /*read_only*/ false), obfuscation}}
+    {
+    }
+
+    void write(std::span<const std::byte> src) override
+    {
+        m_file.write(src);
+    }
+
+    void write_buffer(std::span<std::byte> src) override
+    {
+        m_file.write_buffer(src);
+    }
+
+    int fclose() override
+    {
+        return m_file.fclose();
+    }
+
+    bool IsValid() override
+    {
+        return !m_file.IsNull();
+    }
+};
+
+class VecBlockStorageWriter : public BlockStorageWriter
+{
+private:
+    std::vector<std::vector<std::byte>>& m_data;
+    FlatFilePos m_pos;
+public:
+    VecBlockStorageWriter(const FlatFilePos& pos, std::vector<std::vector<std::byte>>& data)
+        : m_data{data}, m_pos{pos}
+    {
+    }
+
+    void write(std::span<const std::byte> src) override
+    {
+        auto& page = m_data[m_pos.nFile];
+        page.insert(page.end(), src.begin(), src.end());
+        m_pos.nPos = m_pos.nPos + src.size();
+    }
+
+    void write_buffer(std::span<std::byte> src) override
+    {
+        auto& page = m_data[m_pos.nFile];
+        page.insert(page.end(), src.begin(), src.end());
+        m_pos.nPos = m_pos.nPos + src.size(); 
+    }
+
+    int fclose() override
+    {
+        return 0;
+    }
+
+    bool IsValid() override
+    {
+        return true;
+    }
+};
+
+class BlockStorageReader
+{
+public:
+    virtual ~BlockStorageReader() = default;
+
+    virtual void read(std::span<std::byte> dst) = 0;
+
+    virtual size_t detail_fread(std::span<std::byte> dst) = 0;
+
+    virtual void seek(int64_t offset, int origin) = 0;
+
+    virtual bool IsValid() = 0;
+
+    template <typename S>
+    BlockStorageReader& operator>>(S&& obj)
+    {
+        ::Unserialize(*this, obj);
+        return *this;
+    }
+};
+
+class FileBlockStorageReader : public BlockStorageReader
+{
+private:
+    AutoFile m_file;
+public:
+    FileBlockStorageReader(const FlatFilePos& pos, FlatFileSeq undo_file_seq, const Obfuscation& obfuscation)
+        : m_file{AutoFile{undo_file_seq.Open(pos, /*read_only*/ true), obfuscation}}
+    {
+    }
+
+    bool IsValid() override
+    {
+        return !m_file.IsNull();
+    }
+
+    void read(std::span<std::byte> dst) override
+    {
+        m_file.read(dst);
+    }
+
+    size_t detail_fread(std::span<std::byte> dst) override
+    {
+        return m_file.detail_fread(dst);
+    }
+
+    void seek(int64_t offset, int origin) override
+    {
+        m_file.seek(offset, origin);
+    }
+};
+
+class VecBlockStorageReader : public BlockStorageReader
+{
+private:
+    const std::vector<std::vector<std::byte>>& m_data;
+    FlatFilePos m_pos;
+public:
+    VecBlockStorageReader(const FlatFilePos& pos, std::vector<std::vector<std::byte>>& data)
+        : m_data{data}, m_pos{pos}
+    {
+    }
+
+    bool IsValid() override
+    {
+        return true;
+    }
+
+    void read(std::span<std::byte> dst) override
+    {
+        const auto& page = m_data[m_pos.nFile];
+        std::copy_n(page.data() + m_pos.nPos, dst.size(), dst.begin());
+        m_pos.nPos += dst.size();
+    }
+
+    size_t detail_fread(std::span<std::byte> dst) override
+    {
+        const auto& page = m_data[m_pos.nFile];
+        std::copy_n(page.data() + m_pos.nPos, dst.size(), dst.begin());
+        m_pos.nPos += dst.size();
+        return dst.size();
+    }
+
+    void seek(int64_t offset, int origin) override
+    {
+        if (origin != SEEK_CUR) return;
+
+        m_pos.nPos += offset;
+    }
+};
+
+class BlockStore {
+public:
+    virtual ~BlockStore() = default;
+
+    virtual bool Flush(FlatFilePos& pos, bool finalize) = 0;
+
+    virtual size_t Allocate(FlatFilePos& pos, unsigned int nAddSize, bool& out_of_space) = 0;
+
+    virtual bool Remove(FlatFilePos& pos, std::error_code& ec) = 0;
+
+    virtual bool Exists(FlatFilePos& pos) = 0;
+
+    virtual std::unique_ptr<BlockStorageWriter> MakeBlockStorageWriter(const FlatFilePos& pos, const Obfuscation& obfuscation) = 0;
+
+    virtual std::unique_ptr<BlockStorageReader> MakeBlockStorageReader(const FlatFilePos& pos, const Obfuscation& obfuscation) = 0;
+};
+
+class FileBlockStore : public BlockStore
+{
+private:
+    FlatFileSeq m_flat_file_seq;
+
+public:
+    FileBlockStore(const fs::path& blocks_dir, const char* prefix, const unsigned int blockfile_chunk_size)
+        : m_flat_file_seq{FlatFileSeq(blocks_dir, prefix, blockfile_chunk_size)}
+    {
+    }
+
+    bool Flush(FlatFilePos& pos, bool finalize) override
+    {
+        return m_flat_file_seq.Flush(pos, finalize);
+    }
+
+    size_t Allocate(FlatFilePos& pos, unsigned int nAddSize, bool& out_of_space) override
+    {
+        return m_flat_file_seq.Allocate(pos, nAddSize, out_of_space);
+    }
+
+    bool Remove(FlatFilePos& pos, std::error_code& ec) override
+    {
+        return fs::remove(m_flat_file_seq.FileName(pos), ec);
+    }
+
+    bool Exists(FlatFilePos& pos) override
+    {
+        return fs::exists(m_flat_file_seq.FileName(pos));
+    }
+
+    std::unique_ptr<BlockStorageWriter> MakeBlockStorageWriter(const FlatFilePos& pos, const Obfuscation& obfuscation) override
+    {
+        return std::unique_ptr<BlockStorageWriter>{new FileBlockStorageWriter{pos, m_flat_file_seq, obfuscation}};
+    }
+
+    std::unique_ptr<BlockStorageReader> MakeBlockStorageReader(const FlatFilePos& pos, const Obfuscation& obfuscation) override
+    {
+        return std::unique_ptr<BlockStorageReader>{new FileBlockStorageReader{pos, m_flat_file_seq, obfuscation}};
+    }
+};
+
+class VecBlockStore: public BlockStore
+{
+private:
+    std::vector<std::vector<std::byte>> data;
+
+public:
+    bool Flush(FlatFilePos& pos, bool finalize) override
+    {
+        return true;
+    }
+
+    size_t Allocate(FlatFilePos& pos, unsigned int nAddSize, bool& out_of_space) override
+    {
+        out_of_space = false;
+        while (data.size() <= (size_t)pos.nFile) {
+            data.push_back({});
+            auto& page = data[pos.nFile];
+            page.reserve(MAX_BLOCKFILE_SIZE);
+        }
+        return nAddSize;
+    }
+
+    bool Remove(FlatFilePos& pos, std::error_code& ec) override
+    {
+        return true;
+    }
+
+    bool Exists(FlatFilePos& pos) override
+    {
+        return pos.nFile < (int)data.size();
+    }
+
+    std::unique_ptr<BlockStorageWriter> MakeBlockStorageWriter(const FlatFilePos& pos, const Obfuscation& obfuscation) override
+    {
+        return std::unique_ptr<BlockStorageWriter>{new VecBlockStorageWriter{pos, data}};
+    }
+
+    std::unique_ptr<BlockStorageReader> MakeBlockStorageReader(const FlatFilePos& pos, const Obfuscation& obfuscation) override
+    {
+        return std::unique_ptr<BlockStorageReader>{new VecBlockStorageReader{pos, data}};
+    }
+};
+
 enum class ReadRawError {
     IO,
     BadPartRange,
@@ -216,8 +498,6 @@ private:
     [[nodiscard]] FlatFilePos FindNextBlockPos(unsigned int nAddSize, unsigned int nHeight, uint64_t nTime);
     [[nodiscard]] bool FlushChainstateBlockFile(int tip_height);
     bool FindUndoPos(BlockValidationState& state, int nFile, FlatFilePos& pos, unsigned int nAddSize);
-
-    AutoFile OpenUndoFile(const FlatFilePos& pos, bool fReadOnly = false) const;
 
     /* Calculate the block/rev files to delete based on height specified by user with RPC command pruneblockchain */
     void FindFilesToPruneManual(
@@ -303,13 +583,15 @@ private:
     const kernel::BlockManagerOpts m_opts;
 
     const FlatFileSeq m_block_file_seq;
-    const FlatFileSeq m_undo_file_seq;
+    std::unique_ptr<BlockStore> m_undo_store;
 
 public:
     using Options = kernel::BlockManagerOpts;
     using ReadRawBlockResult = util::Expected<std::vector<std::byte>, ReadRawError>;
 
     explicit BlockManager(const util::SignalInterrupt& interrupt, Options opts);
+
+    std::unique_ptr<BlockStore> m_block_store;
 
     const util::SignalInterrupt& m_interrupt;
     std::atomic<bool> m_importing{false};
@@ -450,9 +732,6 @@ public:
     /** Open a block file (blk?????.dat) */
     AutoFile OpenBlockFile(const FlatFilePos& pos, bool fReadOnly) const;
 
-    /** Translation to a filesystem path */
-    fs::path GetBlockPosFilename(const FlatFilePos& pos) const;
-
     /**
      *  Actually unlink the specified files
      */
@@ -466,6 +745,9 @@ public:
     bool ReadBlockUndo(CBlockUndo& blockundo, const CBlockIndex& index) const;
 
     void CleanupBlockRevFiles() const;
+
+    //friend class BlockStorageReader; // needed?
+    //friend class BlockStorageWriter;
 };
 
 // Calls ActivateBestChain() even if no blocks are imported.
