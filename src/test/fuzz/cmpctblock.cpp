@@ -7,6 +7,7 @@
 #include <consensus/merkle.h>
 #include <net.h>
 #include <net_processing.h>
+#include <node/warnings.h>
 #include <random.h>
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
@@ -16,6 +17,7 @@
 #include <test/util/net.h>
 #include <test/util/script.h>
 #include <test/util/setup_common.h>
+#include <test/util/txmempool.h>
 #include <test/util/validation.h>
 #include <util/fs.h>
 #include <validationinterface.h>
@@ -27,14 +29,14 @@ using namespace util::hex_literals;
 
 namespace {
 
+TestingSetup* g_setup;
+
 //! Fee each created tx will pay.
 const CAmount AMOUNT_FEE{1000};
 //! Cached coinbases that each iteration can copy and use.
-//std::vector<COutPoint> g_mature_coinbase;
+std::vector<COutPoint> g_mature_coinbase;
 //! Constant value used to create valid headers.
 uint32_t g_nBits;
-//! Cached path to the datadir created during init.
-fs::path g_cached_path;
 //! One for each block the fuzzer generates.
 struct BlockInfo {
     std::shared_ptr<CBlock> block;
@@ -72,50 +74,108 @@ public:
     }
 };
 
+void ResetChainman(TestingSetup& setup)
+{
+    SetMockTime(setup.m_node.chainman->GetParams().GenesisBlock().Time());
+
+    bilingual_str error{};
+    setup.m_node.mempool = std::make_unique<CTxMemPool>(MemPoolOptionsForTest(setup.m_node), error);
+    Assert(error.empty());
+
+    setup.m_node.chainman.reset();
+    setup.m_make_chainman();
+    setup.LoadVerifyActivateChainstate();
+
+    node::BlockAssembler::Options options;
+    options.coinbase_output_script = P2WSH_OP_TRUE;
+
+    g_mature_coinbase.clear();
+
+    for (int i = 0; i < 2 * COINBASE_MATURITY; ++i) {
+        COutPoint prevout{MineBlock(setup.m_node, options)};
+        if (i < COINBASE_MATURITY) {
+            g_mature_coinbase.push_back(prevout);
+        }
+    }
+
+    // TODO: Remove?
+    setup.m_node.validation_signals->SyncWithValidationInterfaceQueue();
+}
+
 } // namespace
 
-void initialize_cmpctblock() { }
+void initialize_cmpctblock() {
+    static const auto testing_setup = MakeNoLogFileContext<TestingSetup>(
+        /*chain_type=*/ChainType::REGTEST,
+        {.coins_db_in_memory = true,
+         .block_tree_db_in_memory = true,
+         .setup_validation_interface = false,
+         .setup_validation_interface_no_scheduler = true});
+
+    g_setup = testing_setup.get();
+    g_nBits = Params().GenesisBlock().nBits;
+
+    ResetChainman(*g_setup);
+}
 
 FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
 {
     SeedRandomStateForTest(SeedRand::ZEROS);
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
 
-    std::vector<COutPoint> g_mature_coinbase;
+    SetMockTime(1610000000);
 
-    const auto mock_start_time{1610000000};
+    // chainman.DisableNextWrite???
 
-    const auto testing_setup = MakeNoLogFileContext<const TestingSetup>(
-        /*chain_type=*/ChainType::REGTEST,
-        {.extra_args = {strprintf("-mocktime=%d", mock_start_time).c_str()},
-         .coins_db_in_memory = true,
-         .block_tree_db_in_memory = true,
-         .setup_validation_interface = false,
-         .setup_validation_interface_no_scheduler = true});
+    //const auto mock_start_time{1610000000};
 
-    node::BlockAssembler::Options options;
-    options.coinbase_output_script = P2WSH_OP_TRUE;
+    //node::BlockAssembler::Options options;
+    //options.coinbase_output_script = P2WSH_OP_TRUE;
 
-    for (int i = 0; i < 2 * COINBASE_MATURITY; ++i) {
+    /*for (int i = 0; i < 2 * COINBASE_MATURITY; ++i) {
         COutPoint prevout{MineBlock(testing_setup->m_node, options)};
         if (i < COINBASE_MATURITY) {
             g_mature_coinbase.push_back(prevout);
         }
-    }
+    }*/
 
-    g_nBits = Params().GenesisBlock().nBits;
+    //g_nBits = Params().GenesisBlock().nBits;
 
-    auto setup = testing_setup.get();
+/*
+    auto setup = g_setup.get();
 
     setup->m_node.validation_signals->RegisterValidationInterface(setup->m_node.peerman.get());
     setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
     auto& chainman = static_cast<TestChainstateManager&>(*setup->m_node.chainman);
     chainman.ResetIbd();
+*/
+    auto setup = g_setup;
+
+    auto& chainman = static_cast<TestChainstateManager&>(*setup->m_node.chainman);
+    const auto block_index_size{WITH_LOCK(chainman.GetMutex(), return chainman.BlockIndex().size())};
+    chainman.ResetIbd();
+
+    //unsigned long initial_mempool_size = setup->m_node.mempool->size();
+
+    node::Warnings warnings{};
+    NetGroupManager netgroupman{{}};
+    AddrMan addrman{netgroupman, /*deterministic=*/true, /*consistency_check_ratio=*/0};
+    auto& connman = *static_cast<ConnmanTestMsg*>(setup->m_node.connman.get());
+    auto peerman = PeerManager::make(connman, addrman,
+                                     /*banman=*/nullptr, chainman,
+                                     *setup->m_node.mempool, warnings,
+                                     PeerManager::Options{
+                                         .reconcile_txs = true,
+                                         .deterministic_rng = true,
+                                     });
+    connman.SetMsgProc(peerman.get());
+
+    setup->m_node.validation_signals->RegisterValidationInterface(peerman.get());
+    setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
 
     LOCK(NetEventsInterface::g_msgproc_mutex);
 
     std::vector<CNode*> peers;
-    auto& connman = *static_cast<ConnmanTestMsg*>(setup->m_node.connman.get());
     for (int i = 0; i < 4; ++i) {
         peers.push_back(ConsumeNodeAsUniquePtr(fuzzed_data_provider, i).release());
         CNode& p2p_node = *peers.back();
@@ -384,10 +444,20 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
             random_node.fPauseSend = false;
 
             more_work = connman.ProcessMessagesOnce(random_node);
-            setup->m_node.peerman->SendMessages(&random_node);
+            peerman->SendMessages(&random_node);
         }
     }
 
     setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
     setup->m_node.connman->StopNodes();
+    setup->m_node.validation_signals->UnregisterAllValidationInterfaces();
+
+    if (block_index_size != WITH_LOCK(chainman.GetMutex(), return chainman.BlockIndex().size())) {
+        ResetChainman(*g_setup);
+    }
+
+    // TODO: Combine
+    if (setup->m_node.mempool->size() != 0) {
+        ResetChainman(*g_setup);
+    }
 }
