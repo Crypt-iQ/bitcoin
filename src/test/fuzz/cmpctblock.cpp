@@ -76,9 +76,10 @@ public:
 
 void ResetChainman(TestingSetup& setup)
 {
-    SetMockTime(setup.m_node.chainman->GetParams().GenesisBlock().Time());
+    SetMockTime(Params().GenesisBlock().Time());
 
     bilingual_str error{};
+    setup.m_node.mempool.reset();
     setup.m_node.mempool = std::make_unique<CTxMemPool>(MemPoolOptionsForTest(setup.m_node), error);
     Assert(error.empty());
 
@@ -123,7 +124,16 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
     SeedRandomStateForTest(SeedRand::ZEROS);
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
 
+    auto& g_chainman = *g_setup->m_node.chainman;
+    if (WITH_LOCK(g_chainman.GetMutex(), return g_chainman.BlockIndex().size()) != 200 ||
+        g_setup->m_node.mempool->size() != 0) {
+
+        ResetChainman(*g_setup);
+    }
+
     SetMockTime(1610000000);
+
+    // move Reset logic above to here?
 
     // chainman.DisableNextWrite???
 
@@ -152,10 +162,8 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
     auto setup = g_setup;
 
     auto& chainman = static_cast<TestChainstateManager&>(*setup->m_node.chainman);
-    const auto block_index_size{WITH_LOCK(chainman.GetMutex(), return chainman.BlockIndex().size())};
+    //const auto block_index_size{WITH_LOCK(chainman.GetMutex(), return chainman.BlockIndex().size())};
     chainman.ResetIbd();
-
-    //unsigned long initial_mempool_size = setup->m_node.mempool->size();
 
     node::Warnings warnings{};
     NetGroupManager netgroupman{{}};
@@ -451,13 +459,4 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
     setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
     setup->m_node.connman->StopNodes();
     setup->m_node.validation_signals->UnregisterAllValidationInterfaces();
-
-    if (block_index_size != WITH_LOCK(chainman.GetMutex(), return chainman.BlockIndex().size())) {
-        ResetChainman(*g_setup);
-    }
-
-    // TODO: Combine
-    if (setup->m_node.mempool->size() != 0) {
-        ResetChainman(*g_setup);
-    }
 }
