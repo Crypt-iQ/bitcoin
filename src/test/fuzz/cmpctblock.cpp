@@ -105,6 +105,8 @@ void ResetChainman(TestingSetup& setup)
 
 } // namespace
 
+extern void MakeRandDeterministicDANGEROUS(const uint256& seed) noexcept;
+
 void initialize_cmpctblock() {
     static const auto testing_setup = MakeNoLogFileContext<TestingSetup>(
         /*chain_type=*/ChainType::REGTEST,
@@ -125,11 +127,11 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
 
     auto& g_chainman = *g_setup->m_node.chainman;
-    if (WITH_LOCK(g_chainman.GetMutex(), return g_chainman.BlockIndex().size()) != 201 ||
+    /*if (WITH_LOCK(g_chainman.GetMutex(), return g_chainman.BlockIndex().size()) != 201 ||
         g_setup->m_node.mempool->size() != 0) {
 
         ResetChainman(*g_setup);
-    }
+    }*/
 
     SetMockTime(1610000000);
 
@@ -459,4 +461,11 @@ FUZZ_TARGET(cmpctblock, .init=initialize_cmpctblock)
     setup->m_node.validation_signals->SyncWithValidationInterfaceQueue();
     setup->m_node.connman->StopNodes();
     setup->m_node.validation_signals->UnregisterAllValidationInterfaces();
+
+    if (WITH_LOCK(g_chainman.GetMutex(), return g_chainman.BlockIndex().size()) != 201 ||
+        g_setup->m_node.mempool->size() != 0) {
+
+        MakeRandDeterministicDANGEROUS(uint256::ZERO);
+        ResetChainman(*g_setup);
+    }
 }
