@@ -279,6 +279,7 @@ std::shared_ptr<CWallet> LoadWalletInternal(WalletContext& context, const std::s
         std::unique_ptr<WalletDatabase> database = MakeWalletDatabase(name, options, status, error);
         if (!database) {
             error = Untranslated("Wallet file verification failed.") + Untranslated(" ") + error;
+            assert(false);
             return nullptr;
         }
 
