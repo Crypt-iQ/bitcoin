@@ -592,9 +592,11 @@ static RPCHelpMan getnettotals()
 {
     NodeContext& node = EnsureAnyNodeContext(request.context);
     const CConnman& connman = EnsureConnman(node);
+    const PeerManager& peerman = EnsurePeerman(node);
 
+    // Hack totalbytesrecv to store the number of in-flight blocks, to avoid introducing a new RPC
     UniValue obj(UniValue::VOBJ);
-    obj.pushKV("totalbytesrecv", connman.GetTotalBytesRecv());
+    obj.pushKV("totalbytesrecv", (uint64_t)peerman.GetInFlightSize());
     obj.pushKV("totalbytessent", connman.GetTotalBytesSent());
     obj.pushKV("timemillis", TicksSinceEpoch<std::chrono::milliseconds>(SystemClock::now()));
 
