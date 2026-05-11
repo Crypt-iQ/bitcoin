@@ -34,6 +34,7 @@ class uint256;
 
 namespace node {
 class Warnings;
+class IChainAccess;
 } // namespace node
 
 /** Whether transaction reconciliation protocol should be enabled by default. */
@@ -98,6 +99,14 @@ public:
 
     static std::unique_ptr<PeerManager> make(CConnman& connman, AddrMan& addrman,
                                              BanMan* banman, ChainstateManager& chainman,
+                                             CTxMemPool& pool, node::Warnings& warnings, Options opts);
+
+    /** Test-friendly overload: build a PeerManager around an arbitrary
+     *  IChainAccess implementation (e.g. a mock). The PeerManager does
+     *  not take ownership; the caller must keep `chain_access` alive for
+     *  the lifetime of the returned PeerManager. */
+    static std::unique_ptr<PeerManager> make(CConnman& connman, AddrMan& addrman,
+                                             BanMan* banman, node::IChainAccess& chain_access,
                                              CTxMemPool& pool, node::Warnings& warnings, Options opts);
     virtual ~PeerManager() = default;
 
