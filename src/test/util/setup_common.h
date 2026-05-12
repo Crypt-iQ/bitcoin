@@ -22,6 +22,7 @@
 #include <util/fs.h>
 #include <util/signalinterrupt.h>
 #include <util/string.h>
+#include <util/threadpool.h>
 #include <util/vector.h>
 
 #include <functional>
@@ -53,6 +54,7 @@ struct TestOpts {
     bool setup_net{true};
     bool setup_validation_interface{true};
     bool min_validation_cache{false}; // Equivalent of -maxsigcachebytes=0
+    ThreadPool* pool;
 };
 
 /** Basic testing setup.

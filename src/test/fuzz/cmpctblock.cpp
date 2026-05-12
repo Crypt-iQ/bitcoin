@@ -36,6 +36,7 @@
 #include <txmempool.h>
 #include <uint256.h>
 #include <util/check.h>
+#include <util/threadpool.h>
 #include <util/time.h>
 #include <util/translation.h>
 #include <validation.h>
@@ -139,16 +140,34 @@ void ResetChainmanAndMempool(TestingSetup& setup)
 
 extern void MakeRandDeterministicDANGEROUS(const uint256& seed) noexcept;
 
+ThreadPool g_pool{"fuzz"};
+Mutex g_pool_mutex;
+size_t g_num_workers = 1;
+
+static void StartPoolIfNeeded() EXCLUSIVE_LOCKS_REQUIRED(!g_pool_mutex)
+{
+    LOCK(g_pool_mutex);
+    if (g_pool.WorkersCount() == g_num_workers) return;
+    g_pool.Start(g_num_workers);
+}
+
 void initialize_cmpctblock()
 {
-    static const auto testing_setup = MakeNoLogFileContext<TestingSetup>();
+    StartPoolIfNeeded();
+    static const auto testing_setup = MakeNoLogFileContext<TestingSetup>(ChainType::REGTEST, {.pool = &g_pool});
     g_setup = testing_setup.get();
     g_nBits = Params().GenesisBlock().nBits;
     ResetChainmanAndMempool(*g_setup);
+    // Stop the threads before the fuzzing engine forks.
+    LOCK(g_pool_mutex);
+    g_pool.Stop();
+    assert(g_pool.WorkersCount() == 0);
 }
 
-FUZZ_TARGET(cmpctblock, .init = initialize_cmpctblock)
+FUZZ_TARGET(cmpctblock, .init = initialize_cmpctblock) EXCLUSIVE_LOCKS_REQUIRED(!g_pool_mutex)
 {
+    StartPoolIfNeeded();
+
     SeedRandomStateForTest(SeedRand::ZEROS);
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
 

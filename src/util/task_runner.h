@@ -7,6 +7,7 @@
 
 #include <cstddef>
 #include <functional>
+#include <util/threadpool.h>
 
 namespace util {
 
@@ -50,9 +51,13 @@ public:
 class ImmediateBackgroundTaskRunner : public TaskRunnerInterface
 {
 public:
-    void insert(std::function<void()> func) override { std::thread(std::move(func)).join(); }
+    explicit ImmediateBackgroundTaskRunner(ThreadPool* pool) : pool{pool} {};
+    void insert(std::function<void()> func) override { Assert(pool->Submit(std::move(func)))->wait(); }
     void flush() override {}
     size_t size() override { return 0; }
+
+private:
+    ThreadPool* pool;
 };
 
 } // namespace util
