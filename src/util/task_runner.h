@@ -47,6 +47,14 @@ public:
     size_t size() override { return 0; }
 };
 
+class ImmediateBackgroundTaskRunner : public TaskRunnerInterface
+{
+public:
+    void insert(std::function<void()> func) override { std::thread(std::move(func)).join(); }
+    void flush() override {}
+    size_t size() override { return 0; }
+};
+
 } // namespace util
 
 #endif // BITCOIN_UTIL_TASK_RUNNER_H

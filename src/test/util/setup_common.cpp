@@ -250,7 +250,7 @@ ChainTestingSetup::ChainTestingSetup(const ChainType chainType, TestOpts opts)
         m_node.validation_signals =
             // Use synchronous task runner while fuzzing to avoid non-determinism
             EnableFuzzDeterminism() ?
-                std::make_unique<ValidationSignals>(std::make_unique<util::ImmediateTaskRunner>()) :
+                std::make_unique<ValidationSignals>(std::make_unique<util::ImmediateBackgroundTaskRunner>()) :
                 std::make_unique<ValidationSignals>(std::make_unique<SerialTaskRunner>(*m_node.scheduler));
         {
             // Ensure deterministic coverage by waiting for m_service_thread to be running
