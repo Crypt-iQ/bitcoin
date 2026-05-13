@@ -36,6 +36,8 @@
 #include <txmempool.h>
 #include <uint256.h>
 #include <util/check.h>
+#include <util/task_runner.h>
+#include <util/threadpool.h>
 #include <util/time.h>
 #include <util/translation.h>
 #include <validation.h>
@@ -58,6 +60,9 @@
 namespace {
 
 TestingSetup* g_setup;
+ThreadPool g_pool{"cmpctblock"};
+Mutex g_pool_mutex;
+size_t g_num_workers = 1;
 
 //! Fee each created tx will pay.
 const CAmount AMOUNT_FEE{1000};
@@ -135,20 +140,44 @@ void ResetChainmanAndMempool(TestingSetup& setup)
     }
 }
 
+//! Used to run tasks in a ThreadPool to avoid DEBUG_LOCKORDER false positives.
+class ImmediateBackgroundTaskRunner : public util::TaskRunnerInterface
+{
+public:
+    void insert(std::function<void()> func) override { Assert(g_pool.Submit(std::move(func)))->wait(); }
+    void flush() override {}
+    size_t size() override { return 0; }
+};
+
 } // namespace
 
 extern void MakeRandDeterministicDANGEROUS(const uint256& seed) noexcept;
 
-void initialize_cmpctblock()
+static void StartPoolIfNeeded() EXCLUSIVE_LOCKS_REQUIRED(!g_pool_mutex)
+{
+    LOCK(g_pool_mutex);
+    if (g_pool.WorkersCount() == g_num_workers) return;
+    g_pool.Start(g_num_workers);
+}
+
+void initialize_cmpctblock() EXCLUSIVE_LOCKS_REQUIRED(!g_pool_mutex)
 {
     static const auto testing_setup = MakeNoLogFileContext<TestingSetup>();
     g_setup = testing_setup.get();
     g_nBits = Params().GenesisBlock().nBits;
+    // Replace validation_signals before creating chainman and mempool so they use it.
+    testing_setup->m_node.validation_signals = std::make_unique<ValidationSignals>(std::make_unique<ImmediateBackgroundTaskRunner>());
+    StartPoolIfNeeded();
     ResetChainmanAndMempool(*g_setup);
+    // After mining blocks, make g_pool have no workers before starting the fuzz test.
+    LOCK(g_pool_mutex);
+    g_pool.Stop();
 }
 
-FUZZ_TARGET(cmpctblock, .init = initialize_cmpctblock)
+FUZZ_TARGET(cmpctblock, .init = initialize_cmpctblock) EXCLUSIVE_LOCKS_REQUIRED(!g_pool_mutex)
 {
+    StartPoolIfNeeded();
+
     SeedRandomStateForTest(SeedRand::ZEROS);
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
 
