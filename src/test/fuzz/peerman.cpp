@@ -4,6 +4,7 @@
 
 #include <addrman.h>
 #include <banman.h>
+#include <blockencodings.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <consensus/consensus.h>
@@ -12,6 +13,7 @@
 #include <net.h>
 #include <net_processing.h>
 #include <netgroup.h>
+#include <netmessagemaker.h>
 #include <node/chainstate_interface.h>
 #include <node/warnings.h>
 #include <policy/feerate.h>
@@ -36,6 +38,7 @@
 #include <versionbits.h>
 
 #include <ios>
+#include <list>
 #include <memory>
 #include <optional>
 #include <span>
@@ -45,17 +48,47 @@
 
 namespace {
 
-/** Fill `block` with a minimal valid coinbase so its `vtx` is non-empty.
- *  PeerManager forwards blocks into helpers (e.g. CBlockHeaderAndShortTxIDs)
- *  that assume `vtx.size() >= 1` and read `vtx[0]`; a real block always has
- *  at least the coinbase tx, so the mock must too whenever it claims a
- *  successful block read. */
-void StuffMockBlockWithCoinbase(CBlock& block)
+struct MockBlockInfo {
+    std::shared_ptr<CBlock> block;
+    uint256 hash;
+    int32_t height;
+};
+
+class FuzzedCBlockHeaderAndShortTxIDs : public CBlockHeaderAndShortTxIDs
+{
+    using CBlockHeaderAndShortTxIDs::CBlockHeaderAndShortTxIDs;
+
+public:
+    void AddPrefilledTx(PrefilledTransaction&& prefilledtx)
+    {
+        prefilledtxn.push_back(std::move(prefilledtx));
+    }
+
+    void RemoveCoinbasePrefill()
+    {
+        prefilledtxn.erase(prefilledtxn.begin());
+    }
+
+    void InsertCoinbaseShortTxID(uint64_t shorttxid)
+    {
+        shorttxids.insert(shorttxids.begin(), shorttxid);
+    }
+
+    void EraseShortTxIDs(size_t index)
+    {
+        shorttxids.erase(shorttxids.begin() + index);
+    }
+
+    size_t PrefilledTxCount() { return prefilledtxn.size(); }
+    size_t ShortTxIDCount() { return shorttxids.size(); }
+};
+
+void StuffMockBlockWithCoinbase(CBlock& block, int32_t height = 0)
 {
     CMutableTransaction coinbase;
     coinbase.vin.resize(1);
     coinbase.vin[0].prevout.SetNull();
-    coinbase.vin[0].scriptSig = CScript() << OP_0;
+    coinbase.vin[0].scriptSig = CScript() << height << OP_0;
     coinbase.vout.resize(1);
     coinbase.vout[0].nValue = 0;
     coinbase.vout[0].scriptPubKey = CScript();
@@ -63,22 +96,37 @@ void StuffMockBlockWithCoinbase(CBlock& block)
     block.vtx.push_back(MakeTransactionRef(std::move(coinbase)));
 }
 
-/**
- * A mock IChainAccess whose return values are entirely driven by flag fields.
- *
- * The fuzzer flips each flag from the input blob and exercises PeerManagerImpl's
- * reaction to every (representable) combination of chain-state replies, without
- * needing a real ChainstateManager / mempool acceptance pipeline.
- *
- * The mock owns a synthetic CBlockIndex and a CChain held by unique_ptr so the
- * chain can be fully reset (including back to empty) between messages. PeerManager
- * only reads basic fields off the block index (nHeight, nChainWork, nTime, hash)
- * so a single synthetic index is sufficient.
- */
+CTransactionRef MakeMockTx(FuzzedDataProvider& fdp)
+{
+    CMutableTransaction tx_mut;
+    tx_mut.version = fdp.ConsumeIntegral<int32_t>();
+    tx_mut.nLockTime = fdp.ConsumeIntegral<uint32_t>();
+
+    const size_t num_inputs = fdp.ConsumeIntegralInRange<size_t>(1, 3);
+    for (size_t i = 0; i < num_inputs; ++i) {
+        CTxIn in;
+        uint256 prev;
+        WriteLE32(prev.begin(), fdp.ConsumeIntegral<uint32_t>());
+        in.prevout = COutPoint(Txid::FromUint256(prev), fdp.ConsumeIntegral<uint32_t>());
+        in.nSequence = fdp.ConsumeIntegral<uint32_t>();
+        in.scriptSig = CScript();
+        tx_mut.vin.push_back(in);
+    }
+
+    const size_t num_outputs = fdp.ConsumeIntegralInRange<size_t>(1, 3);
+    for (size_t i = 0; i < num_outputs; ++i) {
+        CTxOut out;
+        out.nValue = fdp.ConsumeIntegralInRange<CAmount>(0, 100000);
+        out.scriptPubKey = CScript();
+        tx_mut.vout.push_back(out);
+    }
+
+    return MakeTransactionRef(std::move(tx_mut));
+}
+
 class MockChainAccess final : public node::IChainAccess
 {
 public:
-    // ---- Flag knobs the fuzzer can flip ----------------------------------
     bool flag_ibd{false};
     bool flag_loading_blocks{false};
     bool flag_prune_mode{false};
@@ -96,49 +144,25 @@ public:
     int64_t flag_active_tip_time{1610000000};
     uint32_t flag_tip_chainwork{0x100};
     uint32_t flag_min_chainwork{0x10};
-    /** Synthetic chain-work value for the best-header index. When greater than
-     *  `flag_tip_chainwork`, this models the (very common) "we have a header
-     *  with more work than our active tip but the block isn't connected yet"
-     *  state that PeerManager has to reason about throughout block download. */
     uint32_t flag_best_header_chainwork{0x200};
-    /** Synthetic height for the best-header index. Independent of the active
-     *  tip height; PeerManager uses this to detect that better headers exist
-     *  even when blocks haven't been connected. */
     int32_t flag_best_header_height{2};
     int64_t flag_best_header_time{1610000000};
 
     MempoolAcceptResult::ResultType flag_process_tx_result{MempoolAcceptResult::ResultType::VALID};
-    /** When `flag_process_tx_result` is INVALID, this controls which
-     *  TxValidationResult code the rejection carries. Different codes drive
-     *  different PeerManager branches (orphan handling, peer scoring,
-     *  rejection caches, package reconsideration, …). */
     TxValidationResult flag_tx_reject_reason{TxValidationResult::TX_MEMPOOL_POLICY};
 
-    /** Maximum synthetic chain height. Large enough to exceed
-     *  MIN_BLOCKS_TO_KEEP (288) and the various ~1000-block horizons that
-     *  PeerManager applies to header sync, stale-tip eviction, and
-     *  historical-block range checks. */
+    std::list<CTransactionRef> flag_replaced_transactions;
+
     static constexpr int kMaxSyntheticHeight = 1050;
 
     explicit MockChainAccess(const CChainParams& params)
         : m_params(params), m_consensus(params.GetConsensus())
     {
-        // Allocate the CBlockIndex / hash storage ONCE and never reallocate.
-        // PeerManager captures raw CBlockIndex* into its per-peer CNodeState
-        // (e.g. m_chain_sync.m_work_header, pindexBestKnownBlock) on one
-        // SendMessages call and dereferences them on a later one. If the
-        // mock destroyed and recreated CBlockIndex instances between
-        // messages, those captured pointers would dangle (use-after-free).
-        // By keeping the underlying storage stable for the lifetime of the
-        // MockChainAccess instance, captured pointers stay valid even when
-        // flags change. Refreshes only update fields in place.
         const int N = kMaxSyntheticHeight + 1;
         m_hash_storage.resize(N);
         m_status_overlay.assign(N, 0);
         m_index_storage.reserve(N);
         for (int h = 0; h < N; ++h) {
-            // Give each height a distinct, deterministic hash so
-            // LookupBlockIndex-style identity comparisons behave sensibly.
             WriteLE32(m_hash_storage[h].begin(), static_cast<uint32_t>(h) + 1);
             auto idx = std::make_unique<CBlockIndex>();
             idx->phashBlock = &m_hash_storage[h];
@@ -146,25 +170,12 @@ public:
             idx->pprev = (h == 0) ? nullptr : m_index_storage.back().get();
             m_index_storage.push_back(std::move(idx));
         }
-        // Wire up pskip after all pprev links are in place.
         for (auto& idx : m_index_storage) idx->BuildSkip();
 
         m_active_chain = std::make_unique<CChain>();
         RefreshSyntheticIndex();
     }
 
-    /** Update the synthetic chain's per-block metadata in place from the
-     *  current flag values. Does NOT reallocate CBlockIndex instances;
-     *  pointers handed out previously remain valid.
-     *
-     *  Topology (re-applied each call):
-     *    - Heights [0, active_height] are "full" blocks (BLOCK_HAVE_DATA, nTx=1).
-     *    - Heights (active_height, best_header_height] are header-only
-     *      (BLOCK_VALID_TREE, nTx=0), modelling "headers ahead of blocks".
-     *    - Cumulative chainwork increments by flag_tip_chainwork per active
-     *      block, then by flag_best_header_chainwork per extension block.
-     *
-     *  Takes cs_main internally since CBlockIndex::nStatus is GUARDED_BY(cs_main). */
     void RefreshSyntheticIndex() LOCKS_EXCLUDED(::cs_main)
     {
         LOCK(::cs_main);
@@ -176,7 +187,6 @@ public:
         const int best_header_height = std::clamp(std::max(flag_best_header_height, active_height),
                                                   0, kMaxSyntheticHeight);
 
-        // Update fields in place on the already-allocated indices.
         arith_uint256 cum_work{0};
         for (int h = 0; h <= best_header_height; ++h) {
             CBlockIndex& idx = *m_index_storage[h];
@@ -193,39 +203,18 @@ public:
                 base = BLOCK_VALID_TREE;
                 idx.nTx = 0;
             }
-            // OR in the fuzzer-controlled overlay. The overlay is already
-            // restricted (see RandomizeStatusOverlay) to a "safe" mask that
-            // keeps the resulting flags internally consistent:
-            //   - HAVE_UNDO only when HAVE_DATA is already set (active section).
-            //   - FAILED_VALID and FAILED_CHILD are allowed everywhere; the
-            //     validity-state low bits stay clamped to the base value
-            //     (TREE for header-only, TREE for active too) so we never
-            //     claim a higher validity tier than we've actually backed.
-            //   - OPT_WITNESS is informational and always safe.
             uint8_t overlay = m_status_overlay[h];
-            // Mask off HAVE_UNDO unless HAVE_DATA is in the base.
             if (!(base & BLOCK_HAVE_DATA)) overlay &= ~uint8_t{BLOCK_HAVE_UNDO};
-            // Strip the validity-state low bits from the overlay so they
-            // can't bump us above the base.
             overlay &= ~uint8_t{BLOCK_VALID_MASK};
             idx.nStatus = base | overlay;
         }
-        // Heights past best_header_height retain whatever fields they had
-        // from a previous refresh. They are not reachable via ActiveTip() or
-        // BestHeader(), and LookupBlockIndex only ever returns the active
-        // tip or best-header pointer, so PeerManager will not observe them.
 
         CBlockIndex* const active_tip = m_index_storage[active_height].get();
         m_active_chain->SetTip(*active_tip);
         m_active_tip_ptr = active_tip;
-        // m_best_header is *always* non-null. It points at the top of the
-        // best-header chain, which may be the same as the active tip (when
-        // best_header_height == active_height) or a header-only extension
-        // beyond the active tip.
         m_best_header_ptr = m_index_storage[best_header_height].get();
     }
 
-    /** Reset every flag to its construction default and rebuild state. */
     void ResetAllFlags()
     {
         flag_ibd = false;
@@ -249,20 +238,11 @@ public:
         flag_best_header_time = 1610000000;
         flag_process_tx_result = MempoolAcceptResult::ResultType::VALID;
         flag_tx_reject_reason = TxValidationResult::TX_MEMPOOL_POLICY;
+        flag_replaced_transactions.clear();
         std::fill(m_status_overlay.begin(), m_status_overlay.end(), uint8_t{0});
         RefreshSyntheticIndex();
     }
 
-    /** Reroll every height's nStatus overlay byte from the fuzz blob.
-     *  Each byte is masked to bits PeerManager actually inspects without
-     *  creating impossible combinations:
-     *      BLOCK_HAVE_UNDO    (16)
-     *      BLOCK_FAILED_VALID (32)
-     *      BLOCK_FAILED_CHILD (64)
-     *      BLOCK_OPT_WITNESS  (128)
-     *  The internally-consistent enforcement (HAVE_UNDO requires
-     *  HAVE_DATA, validity tier not exceeded) is done in
-     *  RefreshSyntheticIndex when these bits are applied. */
     void RandomizeStatusOverlay(FuzzedDataProvider& fdp)
     {
         constexpr uint8_t kSafeMask = static_cast<uint8_t>(
@@ -273,9 +253,6 @@ public:
         RefreshSyntheticIndex();
     }
 
-    /** Consume from the fuzz blob, mutate one flag, then rebuild. Called
-     *  between messages so consecutive ProcessMessages calls observe
-     *  different chain-state replies. */
     void MutateFromFuzz(FuzzedDataProvider& fdp)
     {
         const auto selector = fdp.ConsumeIntegralInRange<int>(0, 22);
@@ -318,13 +295,39 @@ public:
                      TxValidationResult::TX_RECONSIDERABLE,
                      TxValidationResult::TX_UNKNOWN,
                  }); break;
-        case 21: RandomizeStatusOverlay(fdp); return; // Already calls Refresh.
-        case 22: /* no-op: occasionally skip mutation */ break;
+        case 21: RandomizeStatusOverlay(fdp); return;
+        case 22: break;
         }
         RefreshSyntheticIndex();
     }
 
-    // ---- IChainAccess implementation -------------------------------------
+    int32_t ExtendInternalChain(bool also_extend_active)
+    {
+        const int32_t new_best = std::clamp(flag_best_header_height + 1, 0, kMaxSyntheticHeight);
+        if (new_best == flag_best_header_height) return -1;
+        flag_best_header_height = new_best;
+        if (also_extend_active) {
+            flag_active_height = std::clamp(flag_active_height + 1, 0, new_best);
+        }
+        RefreshSyntheticIndex();
+        return new_best;
+    }
+
+    uint256 GetSyntheticHashAt(int32_t height) const
+    {
+        const int32_t h = std::clamp(height, 0, kMaxSyntheticHeight);
+        return m_hash_storage[h];
+    }
+
+    int32_t GetActiveTipHeightSafe() const
+    {
+        return std::clamp(flag_active_height, 0, kMaxSyntheticHeight);
+    }
+
+    int32_t GetBestHeaderHeightSafe() const
+    {
+        return std::clamp(std::max(flag_best_header_height, flag_active_height), 0, kMaxSyntheticHeight);
+    }
 
     const CChainParams& GetParams() const override { return m_params; }
     const Consensus::Params& GetConsensus() const override { return m_consensus; }
@@ -397,7 +400,8 @@ public:
     MempoolAcceptResult ProcessTransaction(const CTransactionRef& /*tx*/, bool /*test_accept*/) override
     {
         if (flag_process_tx_result == MempoolAcceptResult::ResultType::VALID) {
-            return MempoolAcceptResult::Success(/*replaced_transactions=*/{}, /*vsize=*/100, /*fee=*/1000,
+            auto replaced = flag_replaced_transactions;
+            return MempoolAcceptResult::Success(std::move(replaced), /*vsize=*/100, /*fee=*/1000,
                                                 /*effective_feerate=*/CFeeRate{1000},
                                                 /*effective_feerate_wtxids=*/{});
         }
@@ -424,19 +428,8 @@ private:
     const CChainParams& m_params;
     const Consensus::Params& m_consensus;
     mutable VersionBitsCache m_versionbits;
-    // Owning storage. Allocated ONCE in the constructor and never freed
-    // until this MockChainAccess goes out of scope at the end of the fuzz
-    // iteration. Within an iteration, PeerManager captures raw CBlockIndex*
-    // pointers into its per-peer state (pindexBestKnownBlock, m_work_header,
-    // …) on one SendMessages call and dereferences them on a later one, so
-    // these pointers must outlive every mid-iteration RefreshSyntheticIndex.
-    // `m_index_storage[i]->nHeight == i`.
     std::vector<std::unique_ptr<CBlockIndex>> m_index_storage;
     std::vector<uint256> m_hash_storage;
-    /** Per-height fuzzer-controlled nStatus overlay. ORed into the
-     *  base nStatus each refresh, masked to a "safe" set that keeps the
-     *  CBlockIndex internally consistent (no impossible combinations like
-     *  HAVE_UNDO without HAVE_DATA, no validity bits past the base state). */
     std::vector<uint8_t> m_status_overlay;
     std::unique_ptr<CChain> m_active_chain;
     CBlockIndex* m_active_tip_ptr{nullptr};
@@ -448,12 +441,6 @@ private:
 
 void initialize_peerman()
 {
-    // BasicTestingSetup runs the one-time global initialization that the
-    // rest of the codebase assumes is in place (logging, SHA self-test,
-    // ECC context, signal handlers, etc.). It does NOT create a
-    // ChainstateManager - that's the whole point of this target. The
-    // returned setup is held in a function-static so it lives for the
-    // entire fuzzing run.
     static const auto testing_setup{
         MakeNoLogFileContext<const BasicTestingSetup>(ChainType::REGTEST)};
     (void)testing_setup;
@@ -466,13 +453,9 @@ FUZZ_TARGET(peerman, .init = initialize_peerman)
 
     NodeClockContext clock_ctx{1610000000s};
 
-    // Fresh mock chain each iteration so prior fuzz inputs cannot bleed
-    // into the next one through stashed flags or pointers.
     MockChainAccess mock_chain{Params()};
     mock_chain.ResetAllFlags();
 
-    // Seed the initial flag state from the fuzz blob, then rebuild the
-    // synthetic chain to reflect it.
     mock_chain.flag_ibd                       = fuzzed_data_provider.ConsumeBool();
     mock_chain.flag_loading_blocks            = fuzzed_data_provider.ConsumeBool();
     mock_chain.flag_prune_mode                = fuzzed_data_provider.ConsumeBool();
@@ -511,17 +494,11 @@ FUZZ_TARGET(peerman, .init = initialize_peerman)
         TxValidationResult::TX_UNKNOWN,
     });
     if (fuzzed_data_provider.ConsumeBool()) {
-        // Seed the per-height nStatus overlay from the fuzz blob so the
-        // entire block tree starts with random (but valid) flag combinations.
         mock_chain.RandomizeStatusOverlay(fuzzed_data_provider);
     } else {
         mock_chain.RefreshSyntheticIndex();
     }
 
-    // Build the surrounding networking objects locally (no shared TestingSetup
-    // chainman). The point of this target is that no real ChainstateManager
-    // is needed: the mock above is the only chain-state surface PeerManager
-    // sees.
     auto netgroupman{NetGroupManager::NoAsmap()};
     AddrMan addrman{netgroupman, /*deterministic=*/true, /*consistency_check_ratio=*/0};
     ConnmanTestMsg connman{0x1337, 0x1337, addrman, netgroupman, Params(),
@@ -544,11 +521,6 @@ FUZZ_TARGET(peerman, .init = initialize_peerman)
     connman.SetMsgProc(peerman.get());
     connman.SetAddrman(addrman);
 
-    // Build a ValidationSignals dispatcher with an immediate (synchronous)
-    // task runner. PeerManager's BlockChecked / NewPoWValidBlock overrides
-    // are `protected`, so callers go through ValidationSignals (a friend of
-    // CValidationInterface). With ImmediateTaskRunner the dispatch happens
-    // inline, so callbacks fire before signals.X(...) returns.
     ValidationSignals signals{std::make_unique<util::ImmediateTaskRunner>()};
     signals.RegisterValidationInterface(peerman.get());
 
@@ -565,40 +537,63 @@ FUZZ_TARGET(peerman, .init = initialize_peerman)
         connman.AddTestNode(p2p_node);
     }
 
+    std::vector<MockBlockInfo> mock_blocks;
+
+    auto create_mock_block = [&]() -> MockBlockInfo {
+        uint256 prev;
+        int32_t height;
+
+        if (mock_blocks.empty() || fuzzed_data_provider.ConsumeBool()) {
+            const int32_t tip_height = mock_chain.GetActiveTipHeightSafe();
+            prev = mock_chain.GetSyntheticHashAt(tip_height);
+            height = tip_height + 1;
+        } else {
+            const size_t index = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, mock_blocks.size() - 1);
+            prev = mock_blocks[index].hash;
+            height = mock_blocks[index].height + 1;
+        }
+
+        std::shared_ptr<CBlock> block = std::make_shared<CBlock>();
+        block->nVersion = fuzzed_data_provider.ConsumeIntegral<int32_t>();
+        block->hashPrevBlock = prev;
+        block->nTime = fuzzed_data_provider.ConsumeIntegral<uint32_t>();
+        block->nBits = fuzzed_data_provider.ConsumeIntegral<uint32_t>();
+        block->nNonce = fuzzed_data_provider.ConsumeIntegral<uint32_t>();
+
+        StuffMockBlockWithCoinbase(*block, height);
+
+        const size_t num_extra_txs = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, 5);
+        for (size_t i = 0; i < num_extra_txs; ++i) {
+            block->vtx.push_back(MakeMockTx(fuzzed_data_provider));
+        }
+
+        uint256 fake_merkle;
+        WriteLE32(fake_merkle.begin(), fuzzed_data_provider.ConsumeIntegral<uint32_t>());
+        block->hashMerkleRoot = fake_merkle;
+
+        MockBlockInfo bi;
+        bi.block = block;
+        bi.hash = block->GetHash();
+        bi.height = height;
+
+        if (fuzzed_data_provider.ConsumeBool()) {
+            mock_chain.ExtendInternalChain(/*also_extend_active=*/fuzzed_data_provider.ConsumeBool());
+        }
+
+        return bi;
+    };
+
     LIMITED_WHILE(fuzzed_data_provider.ConsumeBool(), 30)
     {
-        // Between every message, optionally mutate one flag on the mock so
-        // that consecutive ProcessMessages calls observe different chain-state
-        // replies. This is the whole point of the target: prove that varying
-        // IChainAccess return values changes the PeerManager code path.
         if (fuzzed_data_provider.ConsumeBool()) {
             mock_chain.MutateFromFuzz(fuzzed_data_provider);
         }
 
-        // Pick a valid wire-protocol message type so we exercise the
-        // ProcessMessage dispatcher's known branches, not the unknown-type
-        // bail-out. The payload is still fuzzer-controlled; ProcessMessage's
-        // per-type deserializer will reject malformed bytes naturally.
-        const std::string random_message_type{PickValue(fuzzed_data_provider, ALL_NET_MESSAGE_TYPES)};
-
         clock_ctx.set(ConsumeTime(fuzzed_data_provider));
 
-        // Optionally fire one of the validation-interface callbacks that
-        // PeerManager implements (NewPoWValidBlock, BlockChecked). In a
-        // real node these are dispatched by ValidationSignals after
-        // ProcessNewBlock; here we call them directly on the PeerManager
-        // instance, since they are public virtuals on CValidationInterface.
-        // This exercises PeerManager state that's only reachable through
-        // those entry points (compact-block announcement bookkeeping in
-        // NewPoWValidBlock; block-checked peer scoring & invalid-block
-        // tracking in BlockChecked).
         const int cb_choice = fuzzed_data_provider.ConsumeIntegralInRange<int>(0, 3);
         if (cb_choice == 0 || cb_choice == 1) {
             auto pblock = std::make_shared<CBlock>();
-            // NewPoWValidBlock dereferences vtx[0] and reads vtx.size() - 1
-            // (inside CBlockHeaderAndShortTxIDs), so the block must carry
-            // at least a coinbase. BlockChecked doesn't care about vtx but
-            // sharing the same shape costs nothing.
             StuffMockBlockWithCoinbase(*pblock);
 
             CBlockIndex* pindex = WITH_LOCK(::cs_main, return cb_choice == 0 ? mock_chain.ActiveTip()
@@ -622,11 +617,125 @@ FUZZ_TARGET(peerman, .init = initialize_peerman)
                 signals.BlockChecked(pblock, state);
             }
         }
-        // cb_choice == 2 or 3: skip callbacks this iteration.
+
+        if (fuzzed_data_provider.ConsumeBool()) {
+            const size_t num_replaced = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, 3);
+            mock_chain.flag_replaced_transactions.clear();
+            for (size_t i = 0; i < num_replaced; ++i) {
+                mock_chain.flag_replaced_transactions.push_back(MakeMockTx(fuzzed_data_provider));
+            }
+        }
 
         CSerializedNetMsg net_msg;
-        net_msg.m_type = random_message_type;
-        net_msg.data = ConsumeRandomLengthByteVector(fuzzed_data_provider, MAX_PROTOCOL_MESSAGE_LENGTH);
+        bool sent_net_msg = true;
+
+        const int action = fuzzed_data_provider.ConsumeIntegralInRange<int>(0, 6);
+        switch (action) {
+        case 0: {
+            std::shared_ptr<CBlock> cblock;
+            if (fuzzed_data_provider.ConsumeBool() && !mock_blocks.empty()) {
+                size_t index = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, mock_blocks.size() - 1);
+                cblock = mock_blocks[index].block;
+            } else {
+                MockBlockInfo bi = create_mock_block();
+                cblock = bi.block;
+                mock_blocks.push_back(bi);
+            }
+
+            uint64_t nonce = fuzzed_data_provider.ConsumeIntegral<uint64_t>();
+            FuzzedCBlockHeaderAndShortTxIDs cmpctblock(*cblock, nonce);
+
+            if (fuzzed_data_provider.ConsumeBool()) {
+                CBlockHeaderAndShortTxIDs base_cmpctblock = cmpctblock;
+                net_msg = NetMsg::Make(NetMsgType::CMPCTBLOCK, base_cmpctblock);
+                break;
+            }
+
+            int prev_idx = 0;
+            size_t num_erased = 1;
+            size_t num_txs = cblock->vtx.size();
+
+            for (size_t i = 0; i < num_txs; ++i) {
+                if (i == 0) {
+                    if (fuzzed_data_provider.ConsumeBool()) continue;
+                    num_erased = 0;
+                    uint64_t coinbase_shortid = cmpctblock.GetShortID(cblock->vtx[0]->GetWitnessHash());
+                    cmpctblock.RemoveCoinbasePrefill();
+                    cmpctblock.InsertCoinbaseShortTxID(coinbase_shortid);
+                    continue;
+                }
+
+                if (fuzzed_data_provider.ConsumeBool()) continue;
+
+                uint16_t prefill_idx = num_erased == 0 ? i : i - prev_idx - 1;
+                prev_idx = i;
+                CTransactionRef txref = cblock->vtx[i];
+                PrefilledTransaction prefilledtx = {/*index=*/prefill_idx, txref};
+                cmpctblock.AddPrefilledTx(std::move(prefilledtx));
+
+                cmpctblock.EraseShortTxIDs(i - num_erased);
+                ++num_erased;
+            }
+
+            assert(cmpctblock.PrefilledTxCount() + cmpctblock.ShortTxIDCount() == num_txs);
+
+            CBlockHeaderAndShortTxIDs base_cmpctblock = cmpctblock;
+            net_msg = NetMsg::Make(NetMsgType::CMPCTBLOCK, base_cmpctblock);
+            break;
+        }
+        case 1: {
+            if (mock_blocks.empty()) { sent_net_msg = false; break; }
+            size_t index = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, mock_blocks.size() - 1);
+            const MockBlockInfo& bi = mock_blocks[index];
+            BlockTransactions block_txn;
+            block_txn.blockhash = bi.hash;
+            std::shared_ptr<CBlock> cblock = bi.block;
+
+            for (size_t i = 0; i < cblock->vtx.size(); i++) {
+                if (fuzzed_data_provider.ConsumeBool()) continue;
+                block_txn.txn.push_back(cblock->vtx[i]);
+            }
+
+            net_msg = NetMsg::Make(NetMsgType::BLOCKTXN, block_txn);
+            break;
+        }
+        case 2: {
+            if (mock_blocks.empty()) { sent_net_msg = false; break; }
+            size_t index = fuzzed_data_provider.ConsumeIntegralInRange<size_t>(0, mock_blocks.size() - 1);
+            CBlock block = *mock_blocks[index].block;
+            block.vtx.clear();
+            std::vector<CBlock> headers;
+            headers.emplace_back(block);
+
+            net_msg = NetMsg::Make(NetMsgType::HEADERS, TX_WITH_WITNESS(headers));
+            break;
+        }
+        case 3: {
+            bool hb = fuzzed_data_provider.ConsumeBool();
+            uint64_t version{fuzzed_data_provider.ConsumeBool() ? CMPCTBLOCKS_VERSION : fuzzed_data_provider.ConsumeIntegral<uint64_t>()};
+            net_msg = NetMsg::Make(NetMsgType::SENDCMPCT, /*high_bandwidth=*/hb, /*version=*/version);
+            break;
+        }
+        case 4: {
+            MockBlockInfo bi = create_mock_block();
+            mock_blocks.push_back(bi);
+            sent_net_msg = false;
+            break;
+        }
+        case 5: {
+            CTransactionRef tx = MakeMockTx(fuzzed_data_provider);
+            net_msg = NetMsg::Make(NetMsgType::TX, TX_WITH_WITNESS(*tx));
+            break;
+        }
+        case 6: {
+            const std::string random_message_type{PickValue(fuzzed_data_provider, ALL_NET_MESSAGE_TYPES)};
+            net_msg.m_type = random_message_type;
+            net_msg.data = ConsumeRandomLengthByteVector(fuzzed_data_provider, MAX_PROTOCOL_MESSAGE_LENGTH);
+            break;
+        }
+        }
+
+        if (!sent_net_msg) continue;
 
         CNode& random_node = *PickValue(fuzzed_data_provider, peers);
 
@@ -634,7 +743,7 @@ FUZZ_TARGET(peerman, .init = initialize_peerman)
         (void)connman.ReceiveMsgFrom(random_node, std::move(net_msg));
 
         bool more_work{true};
-        while (more_work) { // Ensure that every message is eventually processed in some way or another
+        while (more_work) {
             random_node.fPauseSend = false;
 
             try {
@@ -644,8 +753,6 @@ FUZZ_TARGET(peerman, .init = initialize_peerman)
             peerman->SendMessages(random_node);
         }
     }
-    // Drain any pending validation callbacks, then unregister PeerManager
-    // before either it or `signals` goes out of scope.
     signals.SyncWithValidationInterfaceQueue();
     signals.UnregisterValidationInterface(peerman.get());
     connman.StopNodes();
