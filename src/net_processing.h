@@ -8,11 +8,13 @@
 
 #include <consensus/amount.h>
 #include <net.h>
+#include <node/blockstorage.h>
 #include <node/txorphanage.h>
 #include <private_broadcast.h>
 #include <protocol.h>
 #include <uint256.h>
 #include <util/expected.h>
+#include <validation.h>
 #include <validationinterface.h>
 
 #include <atomic>
@@ -73,6 +75,80 @@ struct PeerManagerInfo {
     bool ignores_incoming_txs{false};
 };
 
+// TODO: override, default dtor, const refs?
+class NetValidationInterface
+{
+public:
+    virtual ~NetValidationInterface() = default;
+
+    virtual const CChainParams& GetParams() const = 0;
+
+    virtual const Consensus::Params& GetConsensus() const = 0;
+
+    virtual VersionBitsCache& VersionBits() const = 0;
+
+    virtual RecursiveMutex& GetMutex() const = 0;
+
+    virtual CChain& ActiveChain() const = 0;
+
+    virtual CBlockIndex* ActiveTip() const = 0;
+
+    virtual int ActiveHeight() const = 0;
+
+    virtual bool IsInitialBlockDownload() const noexcept = 0;
+
+    virtual const arith_uint256& MinimumChainWork() const = 0;
+
+    virtual CBlockIndex* BestHeader() const = 0;
+
+    virtual void SetBestHeader(CBlockIndex* index) = 0;
+
+    virtual CBlockIndex* LookupBlockIndex(const uint256& hash) = 0; // const?
+
+    virtual const CBlockIndex* LookupBlockIndex(const uint256& hash) const = 0;
+
+    virtual bool LoadingBlocks() const = 0;
+
+    virtual bool IsPruneMode() const = 0;
+
+    virtual bool IsBlockPruned(const CBlockIndex& block) const = 0;
+
+    virtual bool ReadBlock(CBlock& block, const FlatFilePos& pos, const std::optional<uint256>& expected_hash) const = 0;
+
+    virtual bool ReadBlock(CBlock& block, const CBlockIndex& index) const = 0;
+
+    using RawBlockResult = util::Expected<std::vector<std::byte>, node::ReadRawError>;
+    virtual RawBlockResult ReadRawBlock(const FlatFilePos& pos, std::optional<std::pair<size_t, size_t>> block_part = std::nullopt) const = 0;
+
+    virtual const CBlockIndex* FindForkInGlobalIndex(const CBlockLocator& locator) const = 0;
+
+    virtual bool ActivateBestChain(BlockValidationState& state, std::shared_ptr<const CBlock> pblock) = 0;
+
+    virtual const CBlockIndex* CurrentSnapshotBase() const = 0;
+
+    virtual Assumeutxo CurrentAssumeutxoState() const = 0;
+
+    virtual bool ProcessNewBlock(const std::shared_ptr<const CBlock>& block,
+                                 bool force_processing,
+                                 bool min_pow_checked,
+                                 bool* new_block) = 0; // TODO: const?
+
+    virtual bool ProcessNewBlockHeaders(std::span<const CBlockHeader> headers,
+                                        bool min_pow_checked,
+                                        BlockValidationState& state,
+                                        const CBlockIndex** ppindex = nullptr) = 0; // TODO: const?
+
+    virtual MempoolAcceptResult ProcessTransaction(const CTransactionRef& tx, bool test_accept = false) = 0; // TODO: const?
+
+    virtual PackageMempoolAcceptResult ProcessPackage(CTxMemPool& pool,
+                                                         const Package& txns,
+                                                         bool test_accept,
+                                                         const std::optional<CFeeRate>& client_maxfeerate) = 0; // TODO: const?
+
+    virtual void ReportHeadersPresync(int64_t height, int64_t timestamp) = 0; // TODO: const?
+
+    virtual std::optional<std::pair<const CBlockIndex*, const CBlockIndex*>> GetHistoricalBlockRange() const = 0;
+};
 class PeerManager : public CValidationInterface, public NetEventsInterface
 {
 public:
@@ -99,6 +175,11 @@ public:
     static std::unique_ptr<PeerManager> make(CConnman& connman, AddrMan& addrman,
                                              BanMan* banman, ChainstateManager& chainman,
                                              CTxMemPool& pool, node::Warnings& warnings, Options opts);
+
+    static std::unique_ptr<PeerManager> make(CConnman& connman, AddrMan& addrman,
+                                             BanMan* banman, std::unique_ptr<NetValidationInterface> netval,
+                                             CTxMemPool& pool, node::Warnings& warnings, Options opts);
+
     virtual ~PeerManager() = default;
 
     /**
