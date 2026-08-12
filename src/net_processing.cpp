@@ -302,7 +302,7 @@ struct Peer {
         /** A filter of all the (w)txids that the peer has announced to
          *  us or we have announced to the peer. We use this to avoid announcing
          *  the same (w)txid to a peer that already has the transaction. */
-        CRollingBloomFilter m_tx_inventory_known_filter GUARDED_BY(m_tx_inventory_mutex){50000, 0.000001};
+        CRollingBloomFilter m_tx_inventory_known_filter GUARDED_BY(m_tx_inventory_mutex){5000, 0.0001};
         /** Vector of wtxids we still have to announce. For non-wtxid-relay peers,
          *  we retrieve the txid from the corresponding mempool transaction when
          *  constructing the `inv` message. We use the mempool to sort transactions
