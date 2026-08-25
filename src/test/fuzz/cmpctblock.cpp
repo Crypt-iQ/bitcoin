@@ -25,6 +25,7 @@
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
 #include <test/fuzz/util/net.h>
+#include <test/fuzz/util/reachability.h>
 #include <test/util/net.h>
 #include <test/util/random.h>
 #include <test/util/script.h>
@@ -477,6 +478,8 @@ FUZZ_TARGET(cmpctblock, .init = initialize_cmpctblock)
     const size_t end_index_size{WITH_LOCK(chainman.GetMutex(), return chainman.BlockIndex().size())};
     const uint64_t end_sequence{WITH_LOCK(mempool.cs, return mempool.GetSequence())};
 
+    ReachabilityGoal(initial_sequence != end_sequence, "cmpctblock changes the mempool");
+    ReachabilityGoal(initial_index_size != end_index_size, "cmpctblock changes the block index");
     if (initial_index_size != end_index_size || initial_sequence != end_sequence) {
         MakeRandDeterministicDANGEROUS(uint256::ZERO);
         g_mature_coinbase = ResetChainmanAndMempool(*g_setup, node_clock);

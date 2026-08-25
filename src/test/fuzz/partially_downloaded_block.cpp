@@ -11,6 +11,7 @@
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
 #include <test/fuzz/util/mempool.h>
+#include <test/fuzz/util/reachability.h>
 #include <test/util/setup_common.h>
 #include <test/util/time.h>
 #include <test/util/txmempool.h>
@@ -51,10 +52,11 @@ FUZZ_TARGET(partially_downloaded_block, .init = initialize_pdb)
     FakeNodeClock clock{ConsumeTime(fuzzed_data_provider)};
 
     auto block{ConsumeDeserializable<CBlock>(fuzzed_data_provider, TX_WITH_WITNESS)};
-    if (!block || block->vtx.size() == 0 ||
-        block->vtx.size() >= std::numeric_limits<uint16_t>::max()) {
-        return;
-    }
+    const bool suitable_block{
+        block && block->vtx.size() > 0 &&
+        block->vtx.size() < std::numeric_limits<uint16_t>::max()};
+    ReachabilityGoal(suitable_block, "a suitable block is deserialized");
+    if (!suitable_block) return;
 
     CBlockHeaderAndShortTxIDs cmpctblock{*block, fuzzed_data_provider.ConsumeIntegral<uint64_t>()};
 
@@ -88,6 +90,7 @@ FUZZ_TARGET(partially_downloaded_block, .init = initialize_pdb)
     }
 
     auto init_status{pdb.InitData(cmpctblock, extra_txn)};
+    ReachabilityGoal(init_status == READ_STATUS_OK, "compact block initialization succeeds");
 
     std::vector<CTransactionRef> missing;
     // Whether we skipped a transaction that should be included in `missing`.
@@ -120,6 +123,7 @@ FUZZ_TARGET(partially_downloaded_block, .init = initialize_pdb)
 
     CBlock reconstructed_block;
     auto fill_status{pdb.FillBlock(reconstructed_block, missing, segwit_active)};
+    ReachabilityGoal(fill_status == READ_STATUS_OK, "compact block reconstruction succeeds");
     switch (fill_status) {
     case READ_STATUS_OK:
         assert(!skipped_missing);
