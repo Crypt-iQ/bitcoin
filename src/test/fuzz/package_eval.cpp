@@ -396,6 +396,8 @@ FUZZ_TARGET(tx_package_eval, .init = initialize_tx_pool)
 
     chainstate.SetMempool(&tx_pool);
 
+    bool valid_package{false};
+
     LIMITED_WHILE (fuzzed_data_provider.remaining_bytes() > 0, 300) {
         Assert(!mempool_outpoints.empty());
 
@@ -522,6 +524,7 @@ FUZZ_TARGET(tx_package_eval, .init = initialize_tx_pool)
 
         const auto result_package = WITH_LOCK(::cs_main,
                                     return ProcessNewPackage(chainstate, tx_pool, txs, /*test_accept=*/single_submit, client_maxfeerate));
+        valid_package |= result_package.m_state.IsValid();
 
         // Always set bypass_limits to false because it is not supported in ProcessNewPackage and
         // can be a source of divergence.
@@ -562,5 +565,6 @@ FUZZ_TARGET(tx_package_eval, .init = initialize_tx_pool)
     node.validation_signals->UnregisterSharedValidationInterface(outpoints_updater);
 
     WITH_LOCK(::cs_main, tx_pool.check(chainstate.CoinsTip(), chainstate.m_chain.Height() + 1));
+    ReachabilityGoal(valid_package, "tx_package_eval processes a valid package");
 }
 } // namespace
