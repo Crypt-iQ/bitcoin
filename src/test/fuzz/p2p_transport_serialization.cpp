@@ -10,6 +10,7 @@
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
+#include <test/fuzz/util/reachability.h>
 #include <util/chaintype.h>
 
 #include <algorithm>
@@ -73,11 +74,13 @@ FUZZ_TARGET(p2p_transport_serialization, .init = initialize_p2p_transport_serial
 
     mutable_msg_bytes.insert(mutable_msg_bytes.end(), payload_bytes.begin(), payload_bytes.end());
     std::span<const uint8_t> msg_bytes{mutable_msg_bytes};
+    bool received_complete_message{false};
     while (msg_bytes.size() > 0) {
         if (!recv_transport.ReceivedBytes(msg_bytes)) {
             break;
         }
         if (recv_transport.ReceivedMessageComplete()) {
+            received_complete_message = true;
             const auto time{NodeClock::time_point::max()};
             bool reject_message{false};
             CNetMessage msg = recv_transport.GetReceivedMessage(time, reject_message);
@@ -99,6 +102,7 @@ FUZZ_TARGET(p2p_transport_serialization, .init = initialize_p2p_transport_serial
             }
         }
     }
+    ReachabilityGoal(received_complete_message, "v1 transport receives a complete message");
 }
 
 namespace {
