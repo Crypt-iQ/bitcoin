@@ -504,6 +504,8 @@ FUZZ_TARGET(tx_pool, .init = initialize_tx_pool)
 
     chainstate.SetMempool(&tx_pool);
 
+    bool accepted_transaction{false};
+
     // If we ever bypass limits, do not do TRUC invariants checks
     bool ever_bypassed_limits{false};
 
@@ -530,6 +532,7 @@ FUZZ_TARGET(tx_pool, .init = initialize_tx_pool)
         const auto tx = MakeTransactionRef(mut_tx);
         const auto res = WITH_LOCK(::cs_main, return AcceptToMemoryPool(chainstate, tx, GetTime(), bypass_limits, /*test_accept=*/false));
         const bool accepted = res.m_result_type == MempoolAcceptResult::ResultType::VALID;
+        accepted_transaction |= accepted;
         if (accepted) {
             txids.push_back(tx->GetHash());
             if (!ever_bypassed_limits) {
@@ -537,6 +540,7 @@ FUZZ_TARGET(tx_pool, .init = initialize_tx_pool)
             }
         }
     }
+    ReachabilityGoal(accepted_transaction, "tx_pool accepts a transaction");
     Finish(fuzzed_data_provider, tx_pool, chainstate);
 }
 } // namespace
