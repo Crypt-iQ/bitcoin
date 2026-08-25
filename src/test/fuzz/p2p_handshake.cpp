@@ -11,6 +11,7 @@
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
 #include <test/fuzz/util/net.h>
+#include <test/fuzz/util/reachability.h>
 #include <test/util/net.h>
 #include <test/util/setup_common.h>
 #include <test/util/time.h>
@@ -112,5 +113,10 @@ FUZZ_TARGET(p2p_handshake, .init = ::initialize)
         }
     }
 
+    bool completed_handshake{false};
+    for (const CNode* peer : peers) {
+        completed_handshake |= peer->fSuccessfullyConnected;
+    }
+    ReachabilityGoal(completed_handshake, "p2p_handshake completes a handshake");
     node.connman->StopNodes();
 }
