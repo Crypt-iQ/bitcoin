@@ -19,6 +19,7 @@
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
+#include <test/fuzz/util/reachability.h>
 #include <test/util/mining.h>
 #include <test/util/setup_common.h>
 #include <test/util/time.h>
@@ -181,7 +182,8 @@ void utxo_snapshot_fuzz(FuzzBufferType buffer)
         }
     }
 
-    if (ActivateFuzzedSnapshot()) {
+    const bool snapshot_activated{ActivateFuzzedSnapshot()};
+    if (snapshot_activated) {
         LOCK(::cs_main);
         Assert(!chainman.ActiveChainstate().m_from_snapshot_blockhash->IsNull());
         const auto& coinscache{chainman.ActiveChainstate().CoinsTip()};
@@ -214,6 +216,9 @@ void utxo_snapshot_fuzz(FuzzBufferType buffer)
         setup.m_node.chainman.reset();
         setup.m_make_chainman();
         setup.LoadVerifyActivateChainstate();
+    }
+    if constexpr (!INVALID) {
+        ReachabilityGoal(snapshot_activated, "UTXO snapshot activation succeeds");
     }
 }
 
