@@ -19,6 +19,7 @@
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
 #include <test/fuzz/util/mempool.h>
+#include <test/fuzz/util/reachability.h>
 #include <test/util/mining.h>
 #include <test/util/random.h>
 #include <test/util/script.h>
@@ -237,6 +238,8 @@ FUZZ_TARGET(ephemeral_package_eval, .init = initialize_tx_pool)
 
     chainstate.SetMempool(&tx_pool);
 
+    bool valid_package{false};
+
     LIMITED_WHILE (fuzzed_data_provider.remaining_bytes() > 0, 300) {
         Assert(!mempool_outpoints.empty());
 
@@ -343,6 +346,7 @@ FUZZ_TARGET(ephemeral_package_eval, .init = initialize_tx_pool)
 
         const auto result_package = WITH_LOCK(::cs_main,
                                     return ProcessNewPackage(chainstate, tx_pool, txs, /*test_accept=*/single_submit, /*client_maxfeerate=*/{}));
+        valid_package |= result_package.m_state.IsValid();
 
         const auto res = WITH_LOCK(::cs_main, return AcceptToMemoryPool(chainstate, txs.back(), GetTime(),
                                    /*bypass_limits=*/false, /*test_accept=*/!single_submit));
@@ -363,6 +367,7 @@ FUZZ_TARGET(ephemeral_package_eval, .init = initialize_tx_pool)
     node.validation_signals->UnregisterSharedValidationInterface(outpoints_updater);
 
     WITH_LOCK(::cs_main, tx_pool.check(chainstate.CoinsTip(), chainstate.m_chain.Height() + 1));
+    ReachabilityGoal(valid_package, "ephemeral_package_eval processes a valid package");
 }
 
 
