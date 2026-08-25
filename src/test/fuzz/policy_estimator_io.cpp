@@ -9,6 +9,7 @@
 #include <test/fuzz/FuzzedDataProvider.h>
 #include <test/fuzz/fuzz.h>
 #include <test/fuzz/util.h>
+#include <test/fuzz/util/reachability.h>
 #include <test/util/setup_common.h>
 
 #include <memory>
@@ -31,9 +32,11 @@ FUZZ_TARGET(policy_estimator_io, .init = initialize_policy_estimator_io)
     // Reuse estimators across runs to avoid costly object creation.
     static CBlockPolicyEstimator block_policy_estimator{
         BlockPolicyFeeEstPath(*g_setup->m_node.args), DEFAULT_ACCEPT_STALE_FEE_ESTIMATES};
+    bool block_policy_read_success{false};
     {
         AutoFile fuzzed_auto_file_block_policy{fuzzed_file_provider.open()};
-        if (block_policy_estimator.Read(fuzzed_auto_file_block_policy)) {
+        block_policy_read_success = block_policy_estimator.Read(fuzzed_auto_file_block_policy);
+        if (block_policy_read_success) {
             block_policy_estimator.Write(fuzzed_auto_file_block_policy);
         }
         (void)fuzzed_auto_file_block_policy.fclose();
@@ -51,4 +54,5 @@ FUZZ_TARGET(policy_estimator_io, .init = initialize_policy_estimator_io)
         // have written to the fuzzed file.
         (void)fuzzed_auto_file_mempool_policy.fclose();
     }
+    ReachabilityGoal(block_policy_read_success, "block policy estimator reading succeeds");
 }
