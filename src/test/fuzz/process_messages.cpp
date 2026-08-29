@@ -135,6 +135,8 @@ FUZZ_TARGET(process_messages, .init = initialize_process_messages)
     node.validation_signals->UnregisterValidationInterface(node.peerman.get());
     node.connman->StopNodes();
     const auto end_sequence{WITH_LOCK(node.mempool->cs, return node.mempool->GetSequence())};
+    IJON_MAX(end_sequence);
+    assert(end_sequence > 20);
     const auto end_block_index_size{WITH_LOCK(chainman.GetMutex(), return chainman.BlockIndex().size())};
     ReachabilityGoal(initial_sequence != end_sequence, "process_messages changes the mempool");
     ReachabilityGoal(initial_block_index_size != end_block_index_size, "process_messages changes the block index");
