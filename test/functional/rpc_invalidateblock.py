@@ -14,6 +14,9 @@ from test_framework.util import (
     assert_raises_rpc_error,
 )
 
+import random
+import threading
+import time
 
 class InvalidateTest(BitcoinTestFramework):
     def set_test_params(self):
@@ -22,6 +25,164 @@ class InvalidateTest(BitcoinTestFramework):
 
     def setup_network(self):
         self.setup_nodes()
+
+    def add_options(self, parser):
+        parser.add_argument("--best-header-attempts", type=int, default=0,
+                            help="Attempts for the invalid-m_best_header race test")
+        parser.add_argument("--reconsider-attempts", type=int, default=0,
+                            help="Attempts for the concurrent reconsiderblock race test")
+
+    def test_invalid_best_header_race(self, attempts, depth=30):
+        """Flag a highpow_outofchain_headers entry while the disconnect loop is running.
+
+        The candidate scan in the disconnect loop assigns m_best_header without
+        rechecking BLOCK_FAILED_VALID. The snapshot filtered on that flag once, before
+        cs_main was ever released, so a block flagged during a gap is still in the map
+        and still eligible. AcceptBlock calls InvalidBlockFound under cs_main only
+        (validation.cpp:4379), so submitting an invalid full block for a known header
+        does the flagging.
+
+        The candidate is a sibling of the block being invalidated: same height, so its
+        work exceeds pindex->pprev (it is in the snapshot) but is below every new_tip
+        until the final iteration. That means it is only selected on the last
+        disconnect, and any of the ~depth gaps before that is a winning window.
+
+        A win trips assert(!(m_best_header->nStatus & BLOCK_FAILED_VALID)) at the top of
+        ChainstateManager::CheckBlockIndex. Run with -checkblockindex=0 for the softer
+        detector below instead of a crash.
+        """
+        self.log.info(f"Race an invalidated candidate into m_best_header ({attempts} attempts)")
+        node = self.nodes[2]
+        self.disconnect_nodes(1, 2)
+        racer = node.create_new_rpc_connection()
+        racer.getblockcount()  # prime the connection
+        self.generatetodescriptor(node, depth + 5, ADDRESS_BCRT1_UNSPENDABLE_DESCRIPTOR, sync_fun=self.no_op)
+
+        for attempt in range(attempts):
+            height = node.getblockcount()
+            target_height = height - depth
+            target_hash = node.getblockhash(target_height)
+            parent_hash = node.getblockhash(target_height - 1)
+            parent_time = node.getblock(parent_hash)["time"]
+
+            # The inflated coinbase height makes the full block fail
+            # ContextualCheckBlock with bad-txns-nonfinal (create_coinbase sets
+            # nLockTime = height - 1, so IsFinalTx rejects before the BIP34 check).
+            # That is BLOCK_CONSENSUS, not BLOCK_MUTATED, which is what
+            # InvalidBlockFound requires in order to flag the block.
+            # ntime varies per attempt so each sibling has a distinct hash.
+            sibling = create_block(int(parent_hash, 16),
+                                   height=target_height + 1000,
+                                   ntime=parent_time + 1 + attempt)
+            sibling.solve()
+            node.submitheader(sibling.serialize().hex())
+            sibling_hex = sibling.serialize().hex()
+
+            result = {}
+            start = threading.Event()
+            # Lower bound keeps the submission from landing before the snapshot is
+            # taken, which would exclude the sibling from the map and waste the attempt.
+            delay = random.uniform(0.0005, 0.01)
+
+            def submit():
+                start.wait()
+                time.sleep(delay)
+                result["reject"] = racer.submitblock(sibling_hex)
+
+            thread = threading.Thread(target=submit)
+            thread.start()
+            start.set()
+            try:
+                node.invalidateblock(target_hash)
+            except Exception as e:
+                thread.join()
+                raise AssertionError(
+                    f"attempt {attempt}: node stopped responding during invalidateblock, "
+                    f"check debug.log for the CheckBlockIndex assertion ({e})")
+            thread.join()
+            # Confirms the sibling really was flagged, so the attempt was a real trial.
+            assert_equal(result["reject"], "bad-txns-nonfinal")
+
+            best_header_height = node.getblockchaininfo()["headers"]
+            tips = {tip["hash"]: tip for tip in node.getchaintips()}
+            entry = tips.get(sibling.hash_hex)
+            if entry is not None and entry["status"] == "invalid" and best_header_height == entry["height"]:
+                raise AssertionError(
+                    f"attempt {attempt}: m_best_header is at height {best_header_height}, "
+                    f"the height of invalid block {sibling.hash_hex}")
+
+            node.reconsiderblock(target_hash)
+            assert_equal(node.getblockcount(), height)
+
+    def test_reconsiderblock_race(self, attempts, depth=30, racers=4):
+        """Run ResetBlockFailureFlags inside InvalidateBlock's disconnect loop.
+
+        ReconsiderBlock in rpc/blockchain.cpp takes only chainman.GetMutex() for
+        ResetBlockFailureFlags, then blocks on m_chainstate_mutex in ActivateBestChain.
+        The disconnect loop releases cs_main every iteration, so a reconsider thread can
+        acquire it in any gap.
+
+        ResetBlockFailureFlags clears BLOCK_FAILED_VALID on both descendants and
+        ancestors of its argument, so reconsiderblock on the old tip clears every block
+        the loop has flagged so far. The next iteration then flags one block lower,
+        leaving already-unflagged descendants above a flagged block. That trips
+        assert(pindex->nStatus & BLOCK_FAILED_VALID) at validation.cpp:5310.
+
+        Landing anywhere in the loop except the final gap is a win, so this needs far
+        fewer attempts than the other race. Several threads with staggered delays are
+        used because each one blocks until invalidateblock returns and so gets one shot.
+        """
+        self.log.info(f"Race reconsiderblock against invalidateblock ({attempts} attempts)")
+        node = self.nodes[2]
+        self.disconnect_nodes(1, 2)
+        conns = [node.create_new_rpc_connection() for _ in range(racers)]
+        for conn in conns:
+            conn.getblockcount()  # prime the connections
+        self.generatetodescriptor(node, depth + 5, ADDRESS_BCRT1_UNSPENDABLE_DESCRIPTOR, sync_fun=self.no_op)
+
+        for attempt in range(attempts):
+            height = node.getblockcount()
+            tip_hash = node.getbestblockhash()
+            target_hash = node.getblockhash(height - depth)
+
+            start = threading.Event()
+            errors = []
+
+            def reconsider(conn, delay):
+                start.wait()
+                time.sleep(delay)
+                try:
+                    conn.reconsiderblock(tip_hash)
+                except Exception as e:
+                    errors.append(e)
+
+            threads = [threading.Thread(target=reconsider,
+                                        args=(conns[i], random.uniform(0.0005, 0.01)))
+                       for i in range(racers)]
+            for thread in threads:
+                thread.start()
+            start.set()
+            try:
+                node.invalidateblock(target_hash)
+            except Exception as e:
+                for thread in threads:
+                    thread.join()
+                raise AssertionError(
+                    f"attempt {attempt}: node stopped responding during invalidateblock, "
+                    f"check debug.log for the CheckBlockIndex assertion ({e})")
+            # The reconsider threads are parked in ActivateBestChain on m_chainstate_mutex
+            # until the invalidateblock above releases it, so join only now.
+            for thread in threads:
+                thread.join()
+            assert_equal(errors, [])
+
+            # Heuristic follow-up: if flags or candidates were left inconsistent, the
+            # restore below will not bring the chain and the best header back together.
+            node.reconsiderblock(target_hash)
+            info = node.getblockchaininfo()
+            assert_equal(info["blocks"], height)
+            assert_equal(info["headers"], height)
+            assert_equal(node.getbestblockhash(), tip_hash)
 
     def run_test(self):
         self.log.info("Make sure we repopulate setBlockIndexCandidates after InvalidateBlock:")
@@ -139,6 +300,10 @@ class InvalidateTest(BitcoinTestFramework):
         assert_raises_rpc_error(-5, "Block not found", self.nodes[1].invalidateblock, "00" * 32)
         assert_equal(self.nodes[1].getbestblockhash(), blocks[-1])
 
+        if self.options.best_header_attempts:
+            self.test_invalid_best_header_race(self.options.best_header_attempts)
+        if self.options.reconsider_attempts:
+            self.test_reconsiderblock_race(self.options.reconsider_attempts)
 
 if __name__ == '__main__':
     InvalidateTest(__file__).main()
