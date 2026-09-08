@@ -204,6 +204,8 @@ static constexpr size_t NUM_PRIVATE_BROADCAST_PER_TX{3};
 /** Private broadcast connections must complete within this time. Disconnect the peer if it takes longer. */
 static constexpr auto PRIVATE_BROADCAST_MAX_CONNECTION_LIFETIME{3min};
 
+static uint64_t g_tsan_canary = 0;
+
 // Internal stuff
 namespace {
 /** Blocks that are in flight, and that are in the queue to be downloaded. */
@@ -2195,6 +2197,8 @@ void PeerManagerImpl::BlockConnected(
     const std::shared_ptr<const CBlock>& pblock,
     const CBlockIndex* pindex)
 {
+    g_tsan_canary++;
+
     // Update this for all chainstate roles so that we don't mistakenly see peers
     // helping us do background IBD as having a stale tip.
     m_last_tip_update = GetTime<std::chrono::seconds>();
@@ -3826,6 +3830,8 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
                                      const std::atomic<bool>& interruptMsgProc)
 {
     AssertLockHeld(g_msgproc_mutex);
+
+    g_tsan_canary++;
 
     LogDebug(BCLog::NET, "received: %s (%u bytes) peer=%d\n", SanitizeString(msg_type), vRecv.size(), pfrom.GetId());
 
