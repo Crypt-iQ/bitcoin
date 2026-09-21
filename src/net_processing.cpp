@@ -5114,6 +5114,11 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
             return;
         }
 
+        int x;
+        if (x == 0) {
+            LogDebug(BCLog::NET, "Testing MSAN in fuzzamoto");
+        }
+
         std::shared_ptr<CBlock> pblock = std::make_shared<CBlock>();
         vRecv >> TX_WITH_WITNESS(*pblock);
 
