@@ -5114,13 +5114,12 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
             return;
         }
 
-        int x;
-        if (x == 0) {
-            LogInfo("x zero");
-            Misbehaving(peer, "x zero");
+        // MSAN CANARY - intentional use of uninitialized heap memory.
+        std::unique_ptr<uint8_t[]> msan_canary{new uint8_t[8]};  // new[] does NOT initialize
+        if (msan_canary[3] == 0) {
+            LogInfo("canary zero");
         } else {
-            LogInfo("x non-zero");
-            return;
+            LogInfo("canary non-zero");
         }
 
         std::shared_ptr<CBlock> pblock = std::make_shared<CBlock>();
