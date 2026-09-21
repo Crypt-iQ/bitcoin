@@ -5116,7 +5116,11 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
 
         int x;
         if (x == 0) {
-            LogDebug(BCLog::NET, "Testing MSAN in fuzzamoto");
+            LogInfo("x zero");
+            Misbehaving(peer, "x zero");
+        } else {
+            LogInfo("x non-zero");
+            return;
         }
 
         std::shared_ptr<CBlock> pblock = std::make_shared<CBlock>();
