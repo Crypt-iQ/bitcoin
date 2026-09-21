@@ -4717,6 +4717,14 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
         // is not considered a protocol violation, so don't punish the peer.
         if (m_chainman.IsInitialBlockDownload()) return;
 
+        // MSAN CANARY - intentional use of uninitialized heap memory.
+        std::unique_ptr<uint8_t[]> msan_canary{new uint8_t[8]};  // new[] does NOT initialize
+        if (msan_canary[3] == 0) {
+            LogInfo("canary zero");
+        } else {
+            LogInfo("canary non-zero");
+        }
+
         CTransactionRef ptx;
         vRecv >> TX_WITH_WITNESS(ptx);
 
@@ -5112,14 +5120,6 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
         if (m_chainman.m_blockman.LoadingBlocks()) {
             LogDebug(BCLog::NET, "Unexpected block message received from peer %d\n", pfrom.GetId());
             return;
-        }
-
-        // MSAN CANARY - intentional use of uninitialized heap memory.
-        std::unique_ptr<uint8_t[]> msan_canary{new uint8_t[8]};  // new[] does NOT initialize
-        if (msan_canary[3] == 0) {
-            LogInfo("canary zero");
-        } else {
-            LogInfo("canary non-zero");
         }
 
         std::shared_ptr<CBlock> pblock = std::make_shared<CBlock>();
