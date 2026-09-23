@@ -96,7 +96,7 @@ bool WalletBatch::ErasePurpose(const std::string& strAddress)
     return EraseIC(std::make_pair(DBKeys::PURPOSE, strAddress));
 }
 
-bool WalletBatch::WriteTx(const CWalletTx& wtx)
+bool WalletBatch::WriteFullTx(const CWalletTx& wtx)
 {
     const Txid txid = wtx.GetHash();
     // Persist all witness variants. Including the canonical one
@@ -116,6 +116,11 @@ bool WalletBatch::EraseTx(Txid hash)
 bool WalletBatch::WriteWtxVariant(const Txid& txid, const CTransactionRef& tx)
 {
     return WriteIC(std::make_pair(DBKeys::WTX_VARIANT, std::make_pair(txid, tx->GetWitnessHash())), TX_WITH_WITNESS(tx));
+}
+
+bool WalletBatch::WriteTxMetadata(const CWalletTx& wtx)
+{
+    return WriteIC(std::make_pair(DBKeys::TX, wtx.GetHash()), wtx);
 }
 
 bool WalletBatch::WriteKeyMetadata(const CKeyMetadata& meta, const CPubKey& pubkey, const bool overwrite)
@@ -229,10 +234,17 @@ bool WalletBatch::WriteDescriptorKey(const uint256& desc_id, const CPubKey& pubk
 
 bool WalletBatch::WriteCryptedDescriptorKey(const uint256& desc_id, const CPubKey& pubkey, const std::vector<unsigned char>& secret)
 {
-    if (!WriteIC(std::make_pair(DBKeys::WALLETDESCRIPTORCKEY, std::make_pair(desc_id, pubkey)), secret, false)) {
+    const auto descriptor_key{std::make_pair(desc_id, pubkey)};
+    const auto plaintext_key{std::make_pair(DBKeys::WALLETDESCRIPTORKEY, descriptor_key)};
+    const auto encrypted_key{std::make_pair(DBKeys::WALLETDESCRIPTORCKEY, descriptor_key)};
+
+    // Keep the write and erase atomic even when the caller has not started a transaction
+    const bool own_txn{!HasActiveTxn()};
+    if (own_txn && !TxnBegin()) return false;
+    if (!WriteIC(encrypted_key, secret, /*fOverwrite=*/false) || !EraseIC(plaintext_key) || (own_txn && !TxnCommit())) {
+        if (own_txn) TxnAbort();
         return false;
     }
-    EraseIC(std::make_pair(DBKeys::WALLETDESCRIPTORKEY, std::make_pair(desc_id, pubkey)));
     return true;
 }
 
@@ -764,9 +776,9 @@ static DBErrors LoadDescriptorWalletRecords(CWallet* pwallet, DatabaseBatch& bat
 
         uint256 id;
         key >> id;
-        WalletDescriptor desc;
+        std::optional<WalletDescriptor> desc;
         try {
-            value >> desc;
+            desc.emplace(WalletDescriptor::FromStream(deserialize, value));
         } catch (const std::ios_base::failure& e) {
             strErr = strprintf("Error: Unrecognized descriptor found in wallet %s. ", pwallet->GetName());
             strErr += (last_client > CLIENT_VERSION) ? "The wallet might have been created on a newer version. " :
@@ -775,11 +787,6 @@ static DBErrors LoadDescriptorWalletRecords(CWallet* pwallet, DatabaseBatch& bat
             // Also include error details
             strErr = strprintf("%s\nDetails: %s", strErr, e.what());
             return DBErrors::UNKNOWN_DESCRIPTOR;
-        }
-
-        if (id != desc.id) {
-            strErr = "The descriptor ID calculated by the wallet differs from the one in DB";
-            return DBErrors::CORRUPT;
         }
 
         DescriptorCache cache;
@@ -837,7 +844,7 @@ static DBErrors LoadDescriptorWalletRecords(CWallet* pwallet, DatabaseBatch& bat
         result = std::max(result, lh_cache_res.m_result);
 
         // Set the cache to the WalletDescriptor
-        desc.cache = cache;
+        desc->cache = cache;
 
         // Get unencrypted keys
         KeyMap keys;
@@ -906,7 +913,7 @@ static DBErrors LoadDescriptorWalletRecords(CWallet* pwallet, DatabaseBatch& bat
         num_ckeys = ckey_res.m_records;
 
         try {
-            pwallet->LoadDescriptorScriptPubKeyMan(id, desc, keys, ckeys);
+            pwallet->LoadDescriptorScriptPubKeyMan(id, *desc, keys, ckeys);
         } catch (std::runtime_error& e) {
             strErr = e.what();
             return DBErrors::CORRUPT;
@@ -1320,10 +1327,10 @@ bool WalletBatch::TxnAbort()
     return res;
 }
 
-void WalletBatch::RegisterTxnListener(const DbTxnListener& l)
+void WalletBatch::RegisterTxnListener(DbTxnListener l)
 {
     assert(m_batch->HasActiveTxn());
-    m_txn_listeners.emplace_back(l);
+    m_txn_listeners.emplace_back(std::move(l));
 }
 
 std::unique_ptr<WalletDatabase> MakeDatabase(const fs::path& path, const DatabaseOptions& options, DatabaseStatus& status, bilingual_str& error)

@@ -5,8 +5,10 @@
 
 #include <bitcoin-build-config.h> // IWYU pragma: keep
 
+#include <rpc/register.h> // IWYU pragma: associated
+
 #include <chainparams.h>
-#include <httpserver.h>
+#include <index/base.h>
 #include <index/blockfilterindex.h>
 #include <index/coinstatsindex.h>
 #include <index/txindex.h>
@@ -18,18 +20,30 @@
 #include <kernel/cs_main.h>
 #include <logging.h>
 #include <node/context.h>
+#include <rpc/protocol.h>
+#include <rpc/request.h>
 #include <rpc/server.h>
 #include <rpc/server_util.h>
 #include <rpc/util.h>
 #include <scheduler.h>
+#include <support/lockedpool.h>
+#include <sync.h>
 #include <tinyformat.h>
 #include <univalue.h>
-#include <util/any.h>
 #include <util/check.h>
 #include <util/time.h>
+#include <validationinterface.h>
 
 #include <cstdint>
+#include <cstdio>
+#include <cstdlib>
 #include <limits>
+#include <memory>
+#include <optional>
+#include <stdexcept>
+#include <string>
+#include <utility>
+#include <vector>
 #ifdef HAVE_MALLOC_INFO
 #include <malloc.h>
 #endif
@@ -378,7 +392,7 @@ static RPCMethod getindexinfo()
                     HelpExampleCli("getindexinfo", "")
                   + HelpExampleRpc("getindexinfo", "")
                   + HelpExampleCli("getindexinfo", "txindex")
-                  + HelpExampleRpc("getindexinfo", "txindex")
+                  + HelpExampleRpc("getindexinfo", R"("txindex")")
                 },
                 [](const RPCMethod& self, const JSONRPCRequest& request) -> UniValue
 {

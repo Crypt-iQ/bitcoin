@@ -7,12 +7,13 @@
 
 #include <blockfilter.h>
 #include <common/settings.h>
+#include <consensus/amount.h>
 #include <kernel/chain.h> // IWYU pragma: export
-#include <node/types.h>
 #include <primitives/transaction.h>
 #include <util/expected.h>
 #include <util/fees.h>
 #include <util/result.h>
+#include <util/time.h>
 
 #include <cstddef>
 #include <cstdint>
@@ -23,9 +24,7 @@
 #include <string>
 #include <vector>
 
-class ArgsManager;
 class CBlock;
-class CBlockUndo;
 class CFeeRate;
 class CRPCCommand;
 class CScheduler;
@@ -40,12 +39,11 @@ struct ChainstateRole;
 } // namespace kernel
 namespace node {
 struct NodeContext;
+enum class TxBroadcast : uint8_t;
 } // namespace node
 
 namespace interfaces {
-
 class Handler;
-class Wallet;
 
 //! Helper for findBlock to selectively return pieces of block data. If block is
 //! found, data will be returned by setting specified output variables. If block
@@ -360,6 +358,9 @@ public:
     //! support for writing null values to settings.json.
     //! Depending on the action returned by the update function, this will either
     //! update the setting in memory or write the updated settings to disk.
+    //! Returns false if the update function returned no action, or if the
+    //! settings could not be written to disk, including when settings are
+    //! disabled with -nosettings. In-memory changes are kept either way.
     virtual bool updateRwSetting(const std::string& name, const SettingsUpdate& update_function) = 0;
 
     //! Replace a setting in <datadir>/settings.json with a new value.

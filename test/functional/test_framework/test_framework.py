@@ -367,7 +367,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
         #
         # If all nodes are in IBD (clean chain from genesis), node0 is assumed to be the source of blocks (miner). To
         # ensure block propagation, all nodes will establish outgoing connections toward node0.
-        # See fPreferredDownload in net_processing.
+        # See m_preferred_download in net_processing.
         #
         # If further outbound connections are needed, they can be added at the beginning of the test with e.g.
         # self.connect_nodes(1, 2)
@@ -400,6 +400,7 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
             self.init_wallet(node=i)
 
     def init_wallet(self, *, node):
+        """Refer to the self.wallet_names docstring on how to use this"""
         wallet_name = self.default_wallet_name if self.wallet_names is None else self.wallet_names[node] if node < len(self.wallet_names) else False
         if wallet_name is not False:
             n = self.nodes[node]
@@ -961,14 +962,13 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
             self.stop_nodes()
             self.nodes = []
 
-            def cache_path(*paths):
-                return os.path.join(cache_node_dir, self.chain, *paths)
+            cache_path = cache_node_dir / self.chain
 
-            os.rmdir(cache_path('wallets'))  # Remove empty wallets dir
-            shutil.rmtree(cache_path('fees'), ignore_errors=True)
-            for entry in os.listdir(cache_path()):
-                if entry not in ['chainstate', 'blocks', 'indexes']:  # Only indexes, chainstate and blocks folders
-                    os.remove(cache_path(entry))
+            (cache_path / "wallets").rmdir()  # Do not cache empty wallets dir
+            shutil.rmtree(cache_path / "fees")  # Do not cache fees dat files
+            for entry in cache_path.iterdir():
+                if entry.name not in ["chainstate", "blocks", "indexes"]:  # Only keep indexes, chainstate and blocks folders
+                    entry.unlink()
 
         for i in range(self.num_nodes):
             self.log.debug("Copy cache directory {} to node {}".format(cache_node_dir, i))
