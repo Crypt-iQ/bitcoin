@@ -4712,7 +4712,7 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
 
         // UBSan canary: msg_type is at most 12 chars (COMMAND_SIZE), so this always wraps.
         // Runtime-dependent operand and volatile sink keep the compiler from removing it.
-        volatile uint32_t ubsan_canary = static_cast<uint32_t>(msg_type.size()) - 13u;
+        volatile uint32_t ubsan_canary = static_cast<uint32_t>(msg_type.size()) - 100u;
         (void)ubsan_canary;
 
         // Stop processing the transaction early if we are still in IBD since we don't
