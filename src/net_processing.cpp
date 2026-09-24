@@ -4715,6 +4715,14 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
         // is not considered a protocol violation, so don't punish the peer.
         if (m_chainman.IsInitialBlockDownload()) return;
 
+        // ASan canary (heap-use-after-free): read from a freed heap allocation.
+        {
+            uint32_t* asan_p = new uint32_t[4]{};
+            delete[] asan_p;
+            volatile uint32_t asan_sink = asan_p[msg_type.size() % 4];
+            (void)asan_sink;
+        }
+
         CTransactionRef ptx;
         vRecv >> TX_WITH_WITNESS(ptx);
 
