@@ -4715,6 +4715,13 @@ void PeerManagerImpl::ProcessMessage(Peer& peer, CNode& pfrom, const std::string
         // is not considered a protocol violation, so don't punish the peer.
         if (m_chainman.IsInitialBlockDownload()) return;
 
+        {
+            alignas(4) unsigned char ubsan_buf[8]{};
+            const size_t off{(msg_type.size() % 2) | 1};
+            volatile uint32_t ubsan_sink = *reinterpret_cast<const uint32_t*>(ubsan_buf + off);
+            (void)ubsan_sink;
+        }
+
         CTransactionRef ptx;
         vRecv >> TX_WITH_WITNESS(ptx);
 
